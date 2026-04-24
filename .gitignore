@@ -1,0 +1,11 @@
+clanker
+*.o
+*.a
+*.so
+*.exe
+*.dll
+*.dylib
+*.log
+*.tmp
+*.db
+*.env

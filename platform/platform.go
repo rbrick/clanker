@@ -1,27 +1,13 @@
 package platform
 
-type Sender struct {
-	Platform string
-	ID       string
-	Username string
-}
+import (
+	"context"
 
-type Content struct {
-	Text     string
-	AudioURL string
-	ImageURL string
-}
-
-type Message struct {
-	// Message ID from the given platform, used for replying to the message
-	ID      string
-	Sender  *Sender
-	Content *Content
-}
+	"github.com/rbrick/clanker/text"
+)
 
 type Platform interface {
-	HandleMessage(*Message)
-	Reply(*Message, string)
-
+	HandleMessage(ctx context.Context, msg *text.Message) error
 	Init() error
+	Start(ctx context.Context) error
 }

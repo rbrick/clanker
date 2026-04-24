@@ -7,6 +7,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/rbrick/clanker/text"
+	"github.com/rbrick/clanker/tools"
 )
 
 const (
@@ -94,7 +95,11 @@ func NewClanker(ctx context.Context, model string, provider fantasy.Provider) (*
 		return nil, err
 	}
 
-	agent := fantasy.NewAgent(llm, fantasy.WithSystemPrompt(SystemPrompt))
+	agentTools := []fantasy.AgentTool{
+		tools.MinecraftPingerTool(),
+	}
+
+	agent := fantasy.NewAgent(llm, fantasy.WithSystemPrompt(SystemPrompt), fantasy.WithTools(agentTools...))
 
 	return &Clanker{
 		provider: provider,

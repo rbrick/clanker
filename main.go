@@ -9,11 +9,25 @@ import (
 	"charm.land/fantasy/providers/openai"
 	"github.com/joho/godotenv"
 	"github.com/rbrick/clanker/agent"
+	"github.com/rbrick/clanker/allowlist"
+	"github.com/rbrick/clanker/database"
+	"github.com/rbrick/clanker/database/models"
+	"github.com/rbrick/clanker/env"
 	"github.com/rbrick/clanker/platform"
+	"gorm.io/gorm"
 )
+
+var DB *gorm.DB
 
 func init() {
 	godotenv.Load()
+
+	db, err := initializeDatabase()
+	if err != nil {
+		panic(err)
+	}
+
+	DB = db
 }
 
 func makeAgent() (agent.Agent, error) {
@@ -39,15 +53,34 @@ func makeAgent() (agent.Agent, error) {
 	return agent, nil
 }
 
+func initializeDatabase() (*gorm.DB, error) {
+
+	dbUri := env.GetEnv("DB_URI", "clanker.db")
+	dbProvider := env.GetEnv("DB_PROVIDER", "sqlite")
+
+	db, err := database.Open(dbProvider, dbUri)
+
+	if err != nil {
+		return nil, err
+	}
+
+	database.Migrate(db, models.ChatMessage{}, models.AllowlistEntry{})
+
+	return db, nil
+}
+
 func main() {
+
 	agent, err := makeAgent()
+
 	if err != nil {
 		panic(err)
 	}
 
 	telegramPlatform := &platform.TelegramPlatform{
-		BotKey: os.Getenv("PLATFORM_TELEGRAM_BOT_TOKEN"),
-		Agent:  agent,
+		BotKey:    os.Getenv("PLATFORM_TELEGRAM_BOT_TOKEN"),
+		Agent:     agent,
+		Allowlist: allowlist.NewAllowlist(database.NewRepository[models.AllowlistEntry](DB)),
 	}
 
 	if err := telegramPlatform.Init(); err != nil {

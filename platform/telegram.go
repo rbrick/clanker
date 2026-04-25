@@ -9,6 +9,7 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/rbrick/clanker/agent"
+	"github.com/rbrick/clanker/allowlist"
 	"github.com/rbrick/clanker/text"
 )
 
@@ -16,18 +17,18 @@ type TelegramPlatform struct {
 	BotKey     string
 	botHandler *bot.Bot
 	Agent      agent.Agent
+
+	Allowlist *allowlist.Allowlist
 }
 
 func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *models.Update) {
 	// Handle incoming messages here
-
-	log.Println(update.Message)
-
 	if update.Message == nil {
 		return
 	}
 
 	if update.Message != nil {
+
 		msg := &text.Message{
 			Platform: "telegram",
 			Sender: &text.Chatter{
@@ -76,33 +77,65 @@ func (t *TelegramPlatform) Start(ctx context.Context) error {
 	return nil
 }
 
-func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message) error {
+func (t *TelegramPlatform) mentions(ctx context.Context, msg *text.Message) bool {
 
-	shouldRespond := false
+	if msg.Chat.Type == "private" {
+		return true
+	}
+
 	if msg.Chat.Type == "group" || msg.Chat.Type == "supergroup" {
 		botInfo, err := t.botHandler.GetMe(ctx)
 
 		if err != nil {
-			log.Printf("Error getting bot info: %v", err)
-			return err
+			return false
 		}
 
 		botUsername := botInfo.Username
 
-		if msg.RepliedTo != nil {
-			if msg.RepliedTo.Username == botUsername {
-				shouldRespond = true
-			}
+		if msg.RepliedTo != nil && strings.EqualFold(strconv.Itoa(int(botInfo.ID)), msg.RepliedTo.ID) {
+			return true
 		}
 
 		if strings.Contains(strings.ToLower(msg.Content.Text), "clanker") || strings.Contains(strings.ToLower(msg.Content.Text), strings.ToLower(botUsername)) {
-			shouldRespond = true
+			return true
 		}
 
 	}
 
-	if !shouldRespond {
+	return false
+}
+
+func mustAtoi(s string) int {
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		panic(err)
+	}
+	return i
+}
+
+func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message) error {
+
+	if !t.mentions(ctx, msg) {
 		log.Printf("Ignoring message: %v", msg)
+		return nil
+	}
+
+	if allowed, err := t.Allowlist.IsAllowed("telegram", msg.Chat.ID); err != nil {
+		log.Printf("Error checking allowlist: %v", err)
+		return nil
+	} else if !allowed {
+
+		chatId := mustAtoi(msg.Chat.ID)
+		log.Printf("Chat %d is not allowed to interact with the bot", chatId)
+
+		t.botHandler.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: msg.Chat.ID,
+			ReplyParameters: &models.ReplyParameters{
+				MessageID: mustAtoi(msg.ID),
+			},
+			Text: "❌ This chat is not allowed to interact with the bot.",
+		})
+
 		return nil
 	}
 
@@ -122,15 +155,12 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 		ReplyParameters: &models.ReplyParameters{
 			MessageID: messageID,
 		},
-
-		ReplyMarkup: &models.ReplyMarkup{},
-		ParseMode:   "Markdown",
+		ParseMode: "Markdown",
 	})
 
 	if err != nil {
 		return err
 	}
-
 	log.Printf("Sent message: %v", sentMsg)
 	return nil
 }

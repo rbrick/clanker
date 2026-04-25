@@ -14,6 +14,8 @@ import (
 	"github.com/rbrick/clanker/database/models"
 	"github.com/rbrick/clanker/env"
 	"github.com/rbrick/clanker/platform"
+	"github.com/rbrick/clanker/snippets"
+	"github.com/rbrick/clanker/tools"
 	"gorm.io/gorm"
 )
 
@@ -30,7 +32,7 @@ func init() {
 	DB = db
 }
 
-func makeAgent() (agent.Agent, error) {
+func makeAgent(agentTools ...fantasy.AgentTool) (agent.Agent, error) {
 	var provider fantasy.Provider
 	var err error
 
@@ -45,7 +47,7 @@ func makeAgent() (agent.Agent, error) {
 		return nil, err
 	}
 
-	agent, err := agent.NewClanker(context.Background(), os.Getenv("LLM_MODEL"), provider)
+	agent, err := agent.NewClanker(context.Background(), os.Getenv("LLM_MODEL"), provider, agentTools...)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +73,13 @@ func initializeDatabase() (*gorm.DB, error) {
 
 func main() {
 
-	agent, err := makeAgent()
+	snippets := snippets.NewSnippets(database.NewRepository[models.Snippet](DB))
+
+	internalTools := []fantasy.AgentTool{}
+
+	internalTools = append(internalTools, tools.NewSnippetsTool(snippets).Tools()...)
+
+	agent, err := makeAgent(internalTools...)
 
 	if err != nil {
 		panic(err)

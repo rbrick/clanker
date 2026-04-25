@@ -41,7 +41,7 @@ func HTTPTool() fantasy.AgentTool {
 			}
 
 			response, err := http.DefaultClient.Do(req)
-			log.Println(response)
+
 			if err != nil {
 				return fantasy.NewTextResponse(err.Error()), err
 			}

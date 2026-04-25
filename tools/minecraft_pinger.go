@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"time"
@@ -310,10 +311,13 @@ func MinecraftPingerTool() fantasy.AgentTool {
 	type MinecraftPingerInput struct {
 		ServerAddress string `json:"server_address"`
 	}
+
 	return fantasy.NewAgentTool[MinecraftPingerInput](
 		"minecraft_pinger",
 		"ping minecraft servers for lively data",
 		func(ctx context.Context, input MinecraftPingerInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+
+			log.Println(input)
 			statusResponse, err := Ping(input.ServerAddress)
 
 			if err != nil {

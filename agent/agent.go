@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"log"
 
 	"charm.land/fantasy"
 	"github.com/rbrick/clanker/text"
@@ -74,6 +75,7 @@ func (c *Clanker) Generate(ctx context.Context, msg text.Message) (*text.Message
 		Prompt: string(prompt),
 	})
 	if err != nil {
+		log.Println(err)
 		return nil, err
 	}
 
@@ -88,20 +90,16 @@ func (c *Clanker) Generate(ctx context.Context, msg text.Message) (*text.Message
 	}, nil
 }
 
-func NewClanker(ctx context.Context, model string, provider fantasy.Provider) (*Clanker, error) {
+func NewClanker(ctx context.Context, model string, provider fantasy.Provider, agentTools ...fantasy.AgentTool) (*Clanker, error) {
 	llm, err := provider.LanguageModel(ctx, model)
 
 	if err != nil {
 		return nil, err
 	}
 
-	webBrowserTool := tools.NewWebBrowserTool()
+	agentTools = append(agentTools, tools.MinecraftPingerTool(), tools.HTTPTool())
 
-	agentTools := []fantasy.AgentTool{
-		tools.MinecraftPingerTool(),
-		tools.HTTPTool(),
-	}
-	agentTools = append(agentTools, webBrowserTool.Tools()...)
+	agentTools = append(agentTools, tools.NewGithubTool().Tools()...)
 
 	agent := fantasy.NewAgent(llm, fantasy.WithSystemPrompt(SystemPrompt), fantasy.WithTools(agentTools...))
 

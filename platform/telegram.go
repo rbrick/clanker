@@ -123,7 +123,8 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 			MessageID: messageID,
 		},
 
-		ParseMode: "Markdown",
+		ReplyMarkup: &models.ReplyMarkup{},
+		ParseMode:   "Markdown",
 	})
 
 	if err != nil {

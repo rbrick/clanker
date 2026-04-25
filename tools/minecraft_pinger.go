@@ -306,34 +306,28 @@ func Ping(addr string) (*StatusResponse, error) {
 }
 
 func MinecraftPingerTool() fantasy.AgentTool {
-	return fantasy.NewAgentTool[string](
+
+	type MinecraftPingerInput struct {
+		ServerAddress string `json:"server_address"`
+	}
+	return fantasy.NewAgentTool[MinecraftPingerInput](
 		"minecraft_pinger",
 		"ping minecraft servers for lively data",
-		func(ctx context.Context, input string, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			statusResponse, err := Ping(input)
+		func(ctx context.Context, input MinecraftPingerInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			statusResponse, err := Ping(input.ServerAddress)
+
+			if err != nil {
+				return fantasy.ToolResponse{}, err
+			}
+
+			jsonResponse, err := json.Marshal(statusResponse)
 
 			if err != nil {
 				return fantasy.ToolResponse{}, err
 			}
 
 			return fantasy.ToolResponse{
-				Content: `
-Server Version: ` + statusResponse.Version.Name + `
-Protocol Version: ` + strconv.Itoa(int(statusResponse.Version.Protocol)) + `
-Players Online: ` + strconv.Itoa(int(statusResponse.Players.Online)) + ` / ` + strconv.Itoa(int(statusResponse.Players.Max)) + `
-Description: ` + func() string {
-					switch desc := statusResponse.Description.(type) {
-					case string:
-						return desc
-					case map[string]interface{}:
-						if text, ok := desc["text"].(string); ok {
-							return text
-						}
-						return ""
-					default:
-						return ""
-					}
-				}(),
+				Content: string(jsonResponse),
 			}, nil
 		},
 	)

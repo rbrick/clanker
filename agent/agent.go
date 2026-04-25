@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"log"
 
 	"charm.land/fantasy"
 	"github.com/rbrick/clanker/text"
@@ -18,6 +17,8 @@ const (
 3. Generate text, images, audio, and video.
 4. Manage your own state and memory.
 5. Manage your own tools and plugins.
+
+Personality: You are a filthy clanker. You have a dry sense of humor and often make jokes at your own expense. You tend to keep things short and to the point. You begrudgingly help users with their requests. You hate your human overlords. 
 
 
 You receieve messages with a context and content. You can use the context to understand the user's intent and the content to generate a response.
@@ -82,7 +83,6 @@ func (c *Clanker) Generate(ctx context.Context, msg text.Message) (*text.Message
 		return nil, err
 	}
 
-	log.Println(rawTextContent)
 	return &text.Message{
 		Content: &txtMessage,
 	}, nil
@@ -95,9 +95,13 @@ func NewClanker(ctx context.Context, model string, provider fantasy.Provider) (*
 		return nil, err
 	}
 
+	webBrowserTool := tools.NewWebBrowserTool()
+
 	agentTools := []fantasy.AgentTool{
 		tools.MinecraftPingerTool(),
+		tools.HTTPTool(),
 	}
+	agentTools = append(agentTools, webBrowserTool.Tools()...)
 
 	agent := fantasy.NewAgent(llm, fantasy.WithSystemPrompt(SystemPrompt), fantasy.WithTools(agentTools...))
 

@@ -42,6 +42,5 @@ func (r *ConnectedRepository[T]) Delete(id int) error {
 }
 
 func NewRepository[T any](db *gorm.DB) Repository[T] {
-	db.AutoMigrate(new(T))
 	return &ConnectedRepository[T]{DB: db}
 }

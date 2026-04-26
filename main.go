@@ -3,19 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/openai"
 	"github.com/joho/godotenv"
 	"github.com/rbrick/clanker/agent"
-	"github.com/rbrick/clanker/allowlist"
+	"github.com/rbrick/clanker/config"
 	"github.com/rbrick/clanker/database"
 	"github.com/rbrick/clanker/database/models"
 	"github.com/rbrick/clanker/env"
-	"github.com/rbrick/clanker/platform"
-	"github.com/rbrick/clanker/snippets"
-	"github.com/rbrick/clanker/tools"
 	"gorm.io/gorm"
 )
 
@@ -73,31 +71,40 @@ func initializeDatabase() (*gorm.DB, error) {
 
 func main() {
 
-	snippets := snippets.NewSnippets(database.NewRepository[models.Snippet](DB))
+	// snippets := snippets.NewSnippets(database.NewRepository[models.Snippet](DB))
 
-	internalTools := []fantasy.AgentTool{}
+	// internalTools := []fantasy.AgentTool{}
 
-	internalTools = append(internalTools, tools.NewSnippetsTool(snippets).Tools()...)
+	// internalTools = append(internalTools, tools.NewSnippetsTool(snippets).Tools()...)
 
-	agent, err := makeAgent(internalTools...)
+	// agent, err := makeAgent(internalTools...)
+
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// telegramPlatform := &platform.TelegramPlatform{
+	// 	BotKey:    os.Getenv("PLATFORM_TELEGRAM_BOT_TOKEN"),
+	// 	Agent:     agent,
+	// 	Allowlist: allowlist.NewAllowlist(database.NewRepository[models.AllowlistEntry](DB)),
+	// }
+
+	// if err := telegramPlatform.Init(); err != nil {
+	// 	panic(err)
+	// }
+
+	// if err := telegramPlatform.Start(context.Background()); err != nil {
+	// 	panic(err)
+	// }
+
+	// select {}
+
+	cfg, err := config.LoadConfig()
 
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
 
-	telegramPlatform := &platform.TelegramPlatform{
-		BotKey:    os.Getenv("PLATFORM_TELEGRAM_BOT_TOKEN"),
-		Agent:     agent,
-		Allowlist: allowlist.NewAllowlist(database.NewRepository[models.AllowlistEntry](DB)),
-	}
+	log.Println(cfg)
 
-	if err := telegramPlatform.Init(); err != nil {
-		panic(err)
-	}
-
-	if err := telegramPlatform.Start(context.Background()); err != nil {
-		panic(err)
-	}
-
-	select {}
 }

@@ -21,6 +21,15 @@ type TelegramPlatform struct {
 	Allowlist *allowlist.Allowlist
 }
 
+func (*TelegramPlatform) Init() error {
+	// botHandler, err := bot.New()
+	return nil
+}
+
+func (*TelegramPlatform) Start(ctx context.Context) error {
+	return nil
+}
+
 func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *models.Update) {
 	// Handle incoming messages here
 	if update.Message == nil {
@@ -28,7 +37,6 @@ func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *model
 	}
 
 	if update.Message != nil {
-
 		msg := &text.Message{
 			Platform: "telegram",
 			Sender: &text.Chatter{
@@ -54,27 +62,6 @@ func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *model
 
 		t.HandleMessage(ctx, msg)
 	}
-}
-
-func (t *TelegramPlatform) Init() error {
-	var err error
-
-	options := []bot.Option{
-		bot.WithDefaultHandler(t.handle),
-	}
-
-	t.botHandler, err = bot.New(t.BotKey, options...)
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (t *TelegramPlatform) Start(ctx context.Context) error {
-	t.botHandler.Start(ctx)
-	return nil
 }
 
 func (t *TelegramPlatform) mentions(ctx context.Context, msg *text.Message) bool {
@@ -162,10 +149,6 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 		return err
 	}
 	log.Printf("Sent message: %v", sentMsg)
-	return nil
-}
-
-func (t *TelegramPlatform) Reply(ctx context.Context, msg *text.Message, reply string) error {
 	return nil
 }
 

@@ -2,10 +2,11 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 	"github.com/rbrick/clanker/snippets"
 )
 
@@ -19,13 +20,19 @@ func NewServer(addr string, snippets *snippets.Snippets) *Server {
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /snippet/{id}", s.handleSnippet)
+	e := echo.New()
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodGet, http.MethodOptions},
+		AllowHeaders: []string{echo.HeaderContentType},
+	}))
 
-	srv := &http.Server{Addr: s.addr, Handler: cors(mux)}
+	e.GET("/health", func(c *echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	})
+	e.GET("/snippet/:id", s.handleSnippet)
+
+	srv := &http.Server{Addr: s.addr, Handler: e}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Shutdown(context.Background())
@@ -33,43 +40,21 @@ func (s *Server) Start(ctx context.Context) error {
 	return srv.ListenAndServe()
 }
 
-func (s *Server) handleSnippet(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
+func (s *Server) handleSnippet(c *echo.Context) error {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid UUID")
-		return
+		return writeError(c, http.StatusBadRequest, "invalid UUID")
 	}
 	snippet, err := s.snippets.GetSnippetByID(id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	if snippet == nil {
-		writeError(w, http.StatusNotFound, "snippet not found")
-		return
+		return writeError(c, http.StatusNotFound, "snippet not found")
 	}
-	writeJSON(w, http.StatusOK, snippet)
+	return c.JSON(http.StatusOK, snippet)
 }
 
-func cors(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+func writeError(c *echo.Context, status int, msg string) error {
+	return c.JSON(status, map[string]string{"error": msg})
 }

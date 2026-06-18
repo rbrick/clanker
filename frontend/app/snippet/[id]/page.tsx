@@ -47,6 +47,19 @@ export default function SnippetPage() {
   }, [params.id])
 
   const selected = snippet?.files?.find((file) => file.id === selectedFileID) ?? snippet?.files?.[0] ?? null
+  const gitURL = useMemo(() => {
+    if (!snippet?.git_url) return ''
+    if (typeof window === 'undefined') return snippet.git_url
+    try {
+      const url = new URL(snippet.git_url)
+      if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+        return `${window.location.origin}${url.pathname}`
+      }
+    } catch {
+      return snippet.git_url
+    }
+    return snippet.git_url
+  }, [snippet?.git_url])
 
   return (
     <main className="page">
@@ -61,9 +74,9 @@ export default function SnippetPage() {
           <div className="grid">
             <div className="list">
               <div className="meta">{snippet.id}</div>
-              {snippet.git_url && (
+              {gitURL && (
                 <div className="meta">
-                  <code>git clone {snippet.git_url}</code>
+                  <code>git clone {gitURL}</code>
                 </div>
               )}
               {snippet.files?.map((file) => (

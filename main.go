@@ -103,7 +103,7 @@ func main() {
 
 	history := chat.NewChatHistory(database.NewRepository[models.ChatMessage](DB))
 	summarizer := summarize.NewService(llm)
-	publicBaseURL := env.GetEnv("PUBLIC_BASE_URL", "http://localhost"+env.GetEnv("API_ADDR", ":8080"))
+	publicBaseURL := env.GetEnv("PUBLIC_BASE_URL", env.GetEnv("PUBLIC_WEB_URL", "http://localhost"+env.GetEnv("API_ADDR", ":8080")))
 	snippetOptions := []snippets.Option{
 		snippets.WithGitStore(snippets.NewGitStore(), database.NewRepository[models.SnippetGitFile](DB), publicBaseURL),
 	}

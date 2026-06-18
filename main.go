@@ -24,6 +24,7 @@ import (
 	"github.com/rbrick/clanker/media"
 	"github.com/rbrick/clanker/objectstore"
 	"github.com/rbrick/clanker/platform"
+	"github.com/rbrick/clanker/services"
 	"github.com/rbrick/clanker/snippets"
 	"github.com/rbrick/clanker/summarize"
 	"github.com/rbrick/clanker/tools"
@@ -85,7 +86,7 @@ func initializeDatabase() (*gorm.DB, error) {
 		return nil, err
 	}
 
-	database.Migrate(db, models.ChatMessage{}, models.AllowlistEntry{}, models.Snippet{}, models.SnippetFile{}, models.SnippetGitFile{}, models.Blob{})
+	database.Migrate(db, models.ChatMessage{}, models.AllowlistEntry{}, models.Snippet{}, models.SnippetFile{}, models.SnippetGitFile{}, models.Blob{}, models.ServiceConnection{}, models.ServiceOAuthState{})
 
 	return db, nil
 }
@@ -129,11 +130,13 @@ func main() {
 	)
 	mediaStore := media.NewStore(database.NewRepository[models.Blob](DB))
 	allowlistStore := allowlist.NewAllowlist(database.NewRepository[models.AllowlistEntry](DB))
+	serviceManager := services.NewManager(database.NewRepository[models.ServiceConnection](DB), database.NewRepository[models.ServiceOAuthState](DB), publicBaseURL)
 
 	internalTools := []fantasy.AgentTool{}
 	internalTools = append(internalTools, tools.NewChatHistoryTool(history, summarizer).Tools()...)
 	internalTools = append(internalTools, tools.NewSnippetsTool(snippetStore).Tools()...)
 	internalTools = append(internalTools, tools.NewImageGeneratorTool(mediaStore, publicBaseURL).Tools()...)
+	internalTools = append(internalTools, tools.NewLinearTool(serviceManager).Tools()...)
 
 	clanker, err := makeAgent(provider, internalTools...)
 	if err != nil {
@@ -143,7 +146,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	apiServer := api.NewServer(env.GetEnv("API_ADDR", ":8080"), snippetStore, mediaStore)
+	apiServer := api.NewServer(env.GetEnv("API_ADDR", ":8080"), snippetStore, mediaStore, serviceManager)
 	go func() {
 		log.Printf("starting read-only api on %s", env.GetEnv("API_ADDR", ":8080"))
 		if err := apiServer.Start(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -154,7 +157,7 @@ func main() {
 
 	platforms := []platform.Platform{}
 	if botKey := os.Getenv("TELEGRAM_BOT_KEY"); botKey != "" {
-		platforms = append(platforms, platform.NewTelegramPlatform(botKey, clanker, allowlistStore, history))
+		platforms = append(platforms, platform.NewTelegramPlatform(botKey, clanker, allowlistStore, history, serviceManager))
 	}
 
 	if len(platforms) == 0 {

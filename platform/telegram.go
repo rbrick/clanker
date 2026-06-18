@@ -12,6 +12,7 @@ import (
 	"github.com/rbrick/clanker/allowlist"
 	"github.com/rbrick/clanker/chat"
 	dbmodels "github.com/rbrick/clanker/database/models"
+	"github.com/rbrick/clanker/services"
 	"github.com/rbrick/clanker/text"
 )
 
@@ -20,12 +21,13 @@ type TelegramPlatform struct {
 	botHandler *bot.Bot
 	Agent      agent.Agent
 
-	Allowlist   *allowlist.Allowlist
-	ChatHistory *chat.ChatHistory
+	Allowlist      *allowlist.Allowlist
+	ChatHistory    *chat.ChatHistory
+	ServiceManager *services.Manager
 }
 
 func (t *TelegramPlatform) Init() error {
-	botHandler, err := bot.New(t.BotKey, bot.WithDefaultHandler(t.handle))
+	botHandler, err := bot.New(t.BotKey, bot.WithDefaultHandler(t.handle), bot.WithCallbackQueryDataHandler("connect:", bot.MatchTypePrefix, t.handleConnectCallback))
 	if err != nil {
 		return err
 	}
@@ -161,6 +163,10 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 
 	if err := t.saveMessage(msg); err != nil {
 		log.Printf("Error saving chat message: %v", err)
+	}
+
+	if strings.TrimSpace(msg.Content.Text) == "/connect" || strings.HasPrefix(strings.TrimSpace(msg.Content.Text), "/connect@") {
+		return t.sendConnectMenu(ctx, msg)
 	}
 
 	if !t.mentions(ctx, msg) {
@@ -357,11 +363,12 @@ func (t *TelegramPlatform) saveMessage(msg *text.Message) error {
 	})
 }
 
-func NewTelegramPlatform(botKey string, a agent.Agent, allowlist *allowlist.Allowlist, history *chat.ChatHistory) *TelegramPlatform {
+func NewTelegramPlatform(botKey string, a agent.Agent, allowlist *allowlist.Allowlist, history *chat.ChatHistory, serviceManager *services.Manager) *TelegramPlatform {
 	return &TelegramPlatform{
-		BotKey:      botKey,
-		Agent:       a,
-		Allowlist:   allowlist,
-		ChatHistory: history,
+		BotKey:         botKey,
+		Agent:          a,
+		Allowlist:      allowlist,
+		ChatHistory:    history,
+		ServiceManager: serviceManager,
 	}
 }

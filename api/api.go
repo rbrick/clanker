@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
 	"github.com/rbrick/clanker/media"
+	"github.com/rbrick/clanker/services"
 	"github.com/rbrick/clanker/snippets"
 )
 
@@ -16,10 +17,11 @@ type Server struct {
 	addr     string
 	snippets *snippets.Snippets
 	media    *media.Store
+	services *services.Manager
 }
 
-func NewServer(addr string, snippets *snippets.Snippets, mediaStore *media.Store) *Server {
-	return &Server{addr: addr, snippets: snippets, media: mediaStore}
+func NewServer(addr string, snippets *snippets.Snippets, mediaStore *media.Store, serviceManager *services.Manager) *Server {
+	return &Server{addr: addr, snippets: snippets, media: mediaStore, services: serviceManager}
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -37,6 +39,7 @@ func (s *Server) Start(ctx context.Context) error {
 	e.GET("/media/:id", s.handleMedia)
 	e.GET("/git/:repo", s.handleGitRepoRoot)
 	e.GET("/git/:repo/*", s.handleGitFile)
+	e.GET("/oauth/linear/callback", s.handleLinearOAuthCallback)
 
 	srv := &http.Server{Addr: s.addr, Handler: e}
 	go func() {

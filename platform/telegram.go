@@ -225,10 +225,11 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 
 	var sentMsg *models.Message
 	if reply.Content.ImageURL != "" {
+		caption := withMediaLink(reply.Content.Text, reply.Content.ImageURL)
 		sentMsg, err = t.botHandler.SendPhoto(ctx, &bot.SendPhotoParams{
 			ChatID:  msg.Chat.ID,
 			Photo:   &models.InputFileString{Data: reply.Content.ImageURL},
-			Caption: reply.Content.Text,
+			Caption: caption,
 			ReplyParameters: &models.ReplyParameters{
 				MessageID: messageID,
 			},
@@ -247,9 +248,13 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 
 	if err != nil {
 		log.Printf("Failed to send Telegram reply with Markdown, retrying as plain text: %v", err)
+		fallbackText := reply.Content.Text
+		if reply.Content.ImageURL != "" {
+			fallbackText = withMediaLink(reply.Content.Text, reply.Content.ImageURL)
+		}
 		sentMsg, err = t.botHandler.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: msg.Chat.ID,
-			Text:   reply.Content.Text,
+			Text:   fallbackText,
 			ReplyParameters: &models.ReplyParameters{
 				MessageID: messageID,
 			},
@@ -279,6 +284,17 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 	}
 
 	return nil
+}
+
+func withMediaLink(textValue, url string) string {
+	if url == "" || strings.Contains(textValue, url) {
+		return textValue
+	}
+	mediaLine := "Clanker media link: " + url
+	if strings.TrimSpace(textValue) == "" {
+		return mediaLine
+	}
+	return strings.TrimSpace(textValue) + "\n\n" + mediaLine
 }
 
 func (t *TelegramPlatform) attachContext(msg *text.Message, limit int) error {

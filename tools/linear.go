@@ -148,7 +148,7 @@ func (t *LinearTool) Tools() []fantasy.AgentTool {
 			b, _ := json.Marshal(projects)
 			return fantasy.NewTextResponse(string(b)), nil
 		}),
-		fantasy.NewAgentTool[Input]("create_linear_ticket", "create a Linear issue for the current chat. Requires platform and chat_id from the message, a Linear team_id, title, optional description, optional project_id, and priority (0 none, 1 urgent, 2 high, 3 normal, 4 low). If not connected, tell the user to run /connect and choose Linear.", func(ctx context.Context, input Input, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		fantasy.NewAgentTool[Input]("create_linear_ticket", "create a Linear issue for the current chat. Requires platform and chat_id from the message, a Linear team_id, title, optional description, optional project_id, and priority (0 none, 1 urgent, 2 high, 3 normal, 4 low). The title must be only the task name; do not include routing phrases like 'under project ...', 'in project ...', team names, or project names in the title when those are provided separately as team_id/project_id. If not connected, tell the user to run /connect and choose Linear.", func(ctx context.Context, input Input, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if input.TeamID == "" || input.Title == "" {
 				return fantasy.NewTextResponse("team_id and title are required"), nil
 			}

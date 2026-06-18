@@ -60,6 +60,7 @@ func (t *LinearTool) Tools() []fantasy.AgentTool {
 		Platform    string `json:"platform"`
 		ChatID      int    `json:"chat_id"`
 		TeamID      string `json:"team_id"`
+		ProjectID   string `json:"project_id,omitempty"`
 		Title       string `json:"title"`
 		Description string `json:"description"`
 		Priority    int    `json:"priority,omitempty"`
@@ -68,8 +69,35 @@ func (t *LinearTool) Tools() []fantasy.AgentTool {
 		Platform string `json:"platform"`
 		ChatID   int    `json:"chat_id"`
 	}
+	type ProjectsInput struct {
+		Platform string `json:"platform"`
+		ChatID   int    `json:"chat_id"`
+		TeamID   string `json:"team_id,omitempty"`
+	}
 	return []fantasy.AgentTool{
-		fantasy.NewAgentTool[ChatInput]("list_linear_teams", "list Linear teams available to this chat connection; use this to find a team_id before creating tickets", func(ctx context.Context, input ChatInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		fantasy.NewAgentTool[ChatInput]("get_linear_context", "get a concise overview of the Linear workspace available to this chat, including teams and projects with IDs, keys/names, states, URLs, and project team associations. Use this first when a user asks to create a Linear ticket and refers to a team or project by name/key so you understand what is available.", func(ctx context.Context, input ChatInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			var out struct {
+				Teams struct {
+					Nodes []struct{ ID, Key, Name string } `json:"nodes"`
+				} `json:"teams"`
+				Projects struct {
+					Nodes []struct {
+						ID, Name, URL, State string
+						Teams                struct {
+							Nodes []struct{ ID, Key, Name string } `json:"nodes"`
+						} `json:"teams"`
+					} `json:"nodes"`
+				} `json:"projects"`
+			}
+			query := "query { teams { nodes { id key name } } projects { nodes { id name url state teams { nodes { id key name } } } } }"
+			msg, err := t.linearGraphQL(ctx, input.Platform, input.ChatID, query, nil, &out)
+			if msg != "" || err != nil {
+				return fantasy.NewTextResponse(msg), err
+			}
+			b, _ := json.Marshal(out)
+			return fantasy.NewTextResponse(string(b)), nil
+		}),
+		fantasy.NewAgentTool[ChatInput]("list_linear_teams", "list Linear teams available to this chat connection with IDs, keys, and names; use this to resolve user-provided team names/keys to team_id before creating tickets", func(ctx context.Context, input ChatInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			var out struct {
 				Teams struct {
 					Nodes []struct{ ID, Key, Name string } `json:"nodes"`
@@ -82,11 +110,52 @@ func (t *LinearTool) Tools() []fantasy.AgentTool {
 			b, _ := json.Marshal(out.Teams.Nodes)
 			return fantasy.NewTextResponse(string(b)), nil
 		}),
-		fantasy.NewAgentTool[Input]("create_linear_ticket", "create a Linear issue for the current chat. Requires platform and chat_id from the message, a Linear team_id, title, optional description and priority (0 none, 1 urgent, 2 high, 3 normal, 4 low). If not connected, tell the user to run /connect and choose Linear.", func(ctx context.Context, input Input, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		fantasy.NewAgentTool[ProjectsInput]("list_linear_projects", "list Linear projects available to this chat connection with IDs, names, URLs, states, and associated teams; optionally pass team_id to filter projects for a team. Use this to resolve user-provided project names to project_id before creating tickets in a project", func(ctx context.Context, input ProjectsInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			query := "query { projects { nodes { id name url state teams { nodes { id key name } } } } }"
+			vars := map[string]interface{}(nil)
+			if input.TeamID != "" {
+				query = "query Projects($teamId: ID!) { team(id: $teamId) { projects { nodes { id name url state teams { nodes { id key name } } } } } }"
+				vars = map[string]interface{}{"teamId": input.TeamID}
+			}
+			var out struct {
+				Projects struct {
+					Nodes []struct {
+						ID, Name, URL, State string
+						Teams                struct {
+							Nodes []struct{ ID, Key, Name string } `json:"nodes"`
+						} `json:"teams"`
+					} `json:"nodes"`
+				} `json:"projects"`
+				Team struct {
+					Projects struct {
+						Nodes []struct {
+							ID, Name, URL, State string
+							Teams                struct {
+								Nodes []struct{ ID, Key, Name string } `json:"nodes"`
+							} `json:"teams"`
+						} `json:"nodes"`
+					} `json:"projects"`
+				} `json:"team"`
+			}
+			msg, err := t.linearGraphQL(ctx, input.Platform, input.ChatID, query, vars, &out)
+			if msg != "" || err != nil {
+				return fantasy.NewTextResponse(msg), err
+			}
+			projects := out.Projects.Nodes
+			if input.TeamID != "" {
+				projects = out.Team.Projects.Nodes
+			}
+			b, _ := json.Marshal(projects)
+			return fantasy.NewTextResponse(string(b)), nil
+		}),
+		fantasy.NewAgentTool[Input]("create_linear_ticket", "create a Linear issue for the current chat. Requires platform and chat_id from the message, a Linear team_id, title, optional description, optional project_id, and priority (0 none, 1 urgent, 2 high, 3 normal, 4 low). If not connected, tell the user to run /connect and choose Linear.", func(ctx context.Context, input Input, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if input.TeamID == "" || input.Title == "" {
 				return fantasy.NewTextResponse("team_id and title are required"), nil
 			}
 			vars := map[string]interface{}{"input": map[string]interface{}{"teamId": input.TeamID, "title": input.Title, "description": input.Description}}
+			if input.ProjectID != "" {
+				vars["input"].(map[string]interface{})["projectId"] = input.ProjectID
+			}
 			if input.Priority != 0 {
 				vars["input"].(map[string]interface{})["priority"] = input.Priority
 			}

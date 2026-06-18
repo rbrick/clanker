@@ -74,10 +74,13 @@ func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *model
 		}
 
 		if update.Message.ReplyToMessage != nil {
-			msg.RepliedTo = &text.Chatter{
-				ID:       strconv.Itoa(int(update.Message.ReplyToMessage.From.ID)),
-				Username: update.Message.ReplyToMessage.From.Username,
-				Name:     strings.TrimSpace(update.Message.ReplyToMessage.From.FirstName + " " + update.Message.ReplyToMessage.From.LastName),
+			msg.ReplyToMessageID = strconv.Itoa(update.Message.ReplyToMessage.ID)
+			if update.Message.ReplyToMessage.From != nil {
+				msg.RepliedTo = &text.Chatter{
+					ID:       strconv.Itoa(int(update.Message.ReplyToMessage.From.ID)),
+					Username: update.Message.ReplyToMessage.From.Username,
+					Name:     strings.TrimSpace(update.Message.ReplyToMessage.From.FirstName + " " + update.Message.ReplyToMessage.From.LastName),
+				}
 			}
 		}
 
@@ -151,6 +154,10 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 		return nil
 	}
 
+	if err := t.attachContext(msg, 40); err != nil {
+		log.Printf("Error loading chat context: %v", err)
+	}
+
 	reply, err := t.Agent.Generate(ctx, *msg)
 
 	if err != nil {
@@ -161,14 +168,27 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 
 	messageID, _ := strconv.Atoi(msg.ID)
 
-	sentMsg, err := t.botHandler.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: msg.Chat.ID,
-		Text:   reply.Content.Text,
-		ReplyParameters: &models.ReplyParameters{
-			MessageID: messageID,
-		},
-		ParseMode: "Markdown",
-	})
+	var sentMsg *models.Message
+	if reply.Content.ImageURL != "" {
+		sentMsg, err = t.botHandler.SendPhoto(ctx, &bot.SendPhotoParams{
+			ChatID:  msg.Chat.ID,
+			Photo:   &models.InputFileString{Data: reply.Content.ImageURL},
+			Caption: reply.Content.Text,
+			ReplyParameters: &models.ReplyParameters{
+				MessageID: messageID,
+			},
+			ParseMode: "Markdown",
+		})
+	} else {
+		sentMsg, err = t.botHandler.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: msg.Chat.ID,
+			Text:   reply.Content.Text,
+			ReplyParameters: &models.ReplyParameters{
+				MessageID: messageID,
+			},
+			ParseMode: "Markdown",
+		})
+	}
 
 	if err != nil {
 		return err
@@ -177,10 +197,11 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 
 	if sentMsg.From != nil {
 		if err := t.saveMessage(&text.Message{
-			ID:        strconv.Itoa(sentMsg.ID),
-			Timestamp: int64(sentMsg.Date),
-			Platform:  msg.Platform,
-			Chat:      msg.Chat,
+			ID:               strconv.Itoa(sentMsg.ID),
+			Timestamp:        int64(sentMsg.Date),
+			Platform:         msg.Platform,
+			ReplyToMessageID: msg.ID,
+			Chat:             msg.Chat,
 			Sender: &text.Chatter{
 				ID:       strconv.Itoa(int(sentMsg.From.ID)),
 				Username: sentMsg.From.Username,
@@ -195,18 +216,55 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 	return nil
 }
 
+func (t *TelegramPlatform) attachContext(msg *text.Message, limit int) error {
+	if t.ChatHistory == nil || msg == nil || msg.Chat == nil {
+		return nil
+	}
+
+	messages, err := t.ChatHistory.GetRecentMessages(msg.Platform, mustAtoi(msg.Chat.ID), limit)
+	if err != nil {
+		return err
+	}
+
+	msg.Context = make([]text.ContextMessage, 0, len(messages))
+	for _, m := range messages {
+		messageID := m.MessageID
+		if messageID == "" {
+			messageID = strconv.Itoa(m.ID)
+		}
+
+		ctxMsg := text.ContextMessage{
+			ID:        messageID,
+			Timestamp: m.Timestamp,
+			Sender: &text.Chatter{
+				ID:       strconv.Itoa(m.SenderID),
+				Username: m.SenderUsername,
+				Name:     m.SenderName,
+			},
+			Content: &text.Content{Text: m.Message},
+		}
+		if m.ReplyToID != nil {
+			ctxMsg.ReplyToMessageID = strconv.Itoa(*m.ReplyToID)
+		}
+		msg.Context = append(msg.Context, ctxMsg)
+	}
+
+	return nil
+}
+
 func (t *TelegramPlatform) saveMessage(msg *text.Message) error {
 	if t.ChatHistory == nil || msg == nil || msg.Chat == nil || msg.Sender == nil || msg.Content == nil {
 		return nil
 	}
 
 	var replyToID *int
-	if msg.RepliedTo != nil && msg.RepliedTo.ID != "" {
-		id := mustAtoi(msg.RepliedTo.ID)
+	if msg.ReplyToMessageID != "" {
+		id := mustAtoi(msg.ReplyToMessageID)
 		replyToID = &id
 	}
 
 	return t.ChatHistory.SaveMessage(&dbmodels.ChatMessage{
+		MessageID:      msg.ID,
 		Platform:       msg.Platform,
 		ChatID:         mustAtoi(msg.Chat.ID),
 		ReplyToID:      replyToID,

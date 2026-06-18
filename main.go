@@ -21,6 +21,7 @@ import (
 	"github.com/rbrick/clanker/database"
 	"github.com/rbrick/clanker/database/models"
 	"github.com/rbrick/clanker/env"
+	"github.com/rbrick/clanker/media"
 	"github.com/rbrick/clanker/platform"
 	"github.com/rbrick/clanker/snippets"
 	"github.com/rbrick/clanker/summarize"
@@ -83,7 +84,7 @@ func initializeDatabase() (*gorm.DB, error) {
 		return nil, err
 	}
 
-	database.Migrate(db, models.ChatMessage{}, models.AllowlistEntry{}, models.Snippet{}, models.SnippetFile{})
+	database.Migrate(db, models.ChatMessage{}, models.AllowlistEntry{}, models.Snippet{}, models.SnippetFile{}, models.Blob{})
 
 	return db, nil
 }
@@ -102,11 +103,13 @@ func main() {
 	history := chat.NewChatHistory(database.NewRepository[models.ChatMessage](DB))
 	summarizer := summarize.NewService(llm)
 	snippetStore := snippets.NewSnippets(database.NewRepository[models.Snippet](DB), database.NewRepository[models.SnippetFile](DB))
+	mediaStore := media.NewStore(database.NewRepository[models.Blob](DB))
 	allowlistStore := allowlist.NewAllowlist(database.NewRepository[models.AllowlistEntry](DB))
 
 	internalTools := []fantasy.AgentTool{}
 	internalTools = append(internalTools, tools.NewChatHistoryTool(history, summarizer).Tools()...)
 	internalTools = append(internalTools, tools.NewSnippetsTool(snippetStore).Tools()...)
+	internalTools = append(internalTools, tools.NewImageGeneratorTool(mediaStore, env.GetEnv("PUBLIC_BASE_URL", "http://localhost"+env.GetEnv("API_ADDR", ":8080"))).Tools()...)
 
 	clanker, err := makeAgent(provider, internalTools...)
 	if err != nil {
@@ -116,7 +119,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	apiServer := api.NewServer(env.GetEnv("API_ADDR", ":8080"), snippetStore)
+	apiServer := api.NewServer(env.GetEnv("API_ADDR", ":8080"), snippetStore, mediaStore)
 	go func() {
 		log.Printf("starting read-only api on %s", env.GetEnv("API_ADDR", ":8080"))
 		if err := apiServer.Start(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {

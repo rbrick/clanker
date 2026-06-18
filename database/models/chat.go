@@ -2,6 +2,7 @@ package models
 
 type ChatMessage struct {
 	ID             int    `json:"id" gorm:"primaryKey;autoIncrement;column:id"`
+	MessageID      string `json:"message_id" gorm:"column:message_id;index"`
 	Platform       string `json:"platform" gorm:"index;column:platform"`
 	ChatID         int    `json:"chat_id" gorm:"index;column:chat_id"`
 	ReplyToID      *int   `json:"reply_to_id" gorm:"column:reply_to_id;default:null"`

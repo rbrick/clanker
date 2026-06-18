@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"sort"
+
 	"github.com/rbrick/clanker/database"
 	"github.com/rbrick/clanker/database/models"
 )
@@ -15,6 +17,26 @@ func (h *ChatHistory) SaveMessage(msg *models.ChatMessage) error {
 
 func (h *ChatHistory) GetMessages(platform string, chatID int) ([]models.ChatMessage, error) {
 	return h.repo.Where("platform = ? AND chat_id = ?", platform, chatID)
+}
+
+func (h *ChatHistory) GetRecentMessages(platform string, chatID int, limit int) ([]models.ChatMessage, error) {
+	messages, err := h.GetMessages(platform, chatID)
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(messages, func(i, j int) bool {
+		if messages[i].Timestamp == messages[j].Timestamp {
+			return messages[i].ID < messages[j].ID
+		}
+		return messages[i].Timestamp < messages[j].Timestamp
+	})
+
+	if limit > 0 && len(messages) > limit {
+		messages = messages[len(messages)-limit:]
+	}
+
+	return messages, nil
 }
 
 func (h *ChatHistory) GetMessagesByChatID(chatID int) ([]models.ChatMessage, error) {

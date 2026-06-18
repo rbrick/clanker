@@ -35,6 +35,7 @@ func (s *Server) Start(ctx context.Context) error {
 	})
 	e.GET("/snippet/:id", s.handleSnippet)
 	e.GET("/media/:id", s.handleMedia)
+	e.GET("/git/:repo", s.handleGitRepoRoot)
 	e.GET("/git/:repo/*", s.handleGitFile)
 
 	srv := &http.Server{Addr: s.addr, Handler: e}
@@ -76,6 +77,15 @@ func (s *Server) handleMedia(c *echo.Context) error {
 		return writeError(c, http.StatusInternalServerError, err.Error())
 	}
 	return c.Blob(http.StatusOK, blob.MediaType, data)
+}
+
+func (s *Server) handleGitRepoRoot(c *echo.Context) error {
+	repoName := c.Param("repo")
+	idText := strings.TrimSuffix(repoName, ".git")
+	if _, err := uuid.Parse(idText); err != nil {
+		return writeError(c, http.StatusBadRequest, "invalid repository")
+	}
+	return c.String(http.StatusOK, "This is a git repository endpoint. Clone it with: git clone "+c.Request().URL.String()+"\n")
 }
 
 func (s *Server) handleGitFile(c *echo.Context) error {

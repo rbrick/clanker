@@ -55,6 +55,11 @@ func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *model
 			return
 		}
 
+		messageText := update.Message.Text
+		if messageText == "" {
+			messageText = update.Message.Caption
+		}
+
 		msg := &text.Message{
 			Platform: "telegram",
 			Sender: &text.Chatter{
@@ -63,7 +68,7 @@ func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *model
 				Name:     strings.TrimSpace(update.Message.From.FirstName + " " + update.Message.From.LastName),
 			},
 			Content: &text.Content{
-				Text: update.Message.Text,
+				Text: messageText,
 			},
 			Chat: &text.Chat{
 				ID:   strconv.Itoa(int(update.Message.Chat.ID)),
@@ -84,11 +89,23 @@ func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *model
 			}
 		}
 
-		t.HandleMessage(ctx, msg)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Panic handling Telegram message %s in chat %s: %v", msg.ID, msg.Chat.ID, r)
+				}
+			}()
+			if err := t.HandleMessage(ctx, msg); err != nil {
+				log.Printf("Error handling Telegram message %s in chat %s: %v", msg.ID, msg.Chat.ID, err)
+			}
+		}()
 	}
 }
 
 func (t *TelegramPlatform) mentions(ctx context.Context, msg *text.Message) bool {
+	if msg == nil || msg.Chat == nil || msg.Content == nil {
+		return false
+	}
 
 	if msg.Chat.Type == "private" {
 		return true
@@ -98,6 +115,7 @@ func (t *TelegramPlatform) mentions(ctx context.Context, msg *text.Message) bool
 		botInfo, err := t.botHandler.GetMe(ctx)
 
 		if err != nil {
+			log.Printf("Unable to determine bot username for mention detection; ignoring group message %s in chat %s: %v", msg.ID, msg.Chat.ID, err)
 			return false
 		}
 
@@ -107,8 +125,23 @@ func (t *TelegramPlatform) mentions(ctx context.Context, msg *text.Message) bool
 			return true
 		}
 
-		if strings.Contains(strings.ToLower(msg.Content.Text), "clanker") || strings.Contains(strings.ToLower(msg.Content.Text), strings.ToLower(botUsername)) {
+		text := strings.ToLower(msg.Content.Text)
+		if strings.Contains(text, "clanker") || strings.Contains(text, strings.ToLower(botUsername)) {
 			return true
+		}
+
+		// Be a little more forgiving for follow-up complaints/requests that are
+		// clearly addressed to the bot but omit its name, e.g. "I asked you to
+		// write a simple Bukkit plugin, but you didn't respond."
+		directAddressPhrases := []string{
+			"asked you", "told you", "can you", "could you", "would you",
+			"are you", "why didn't you", "you didn't", "you did not",
+			"unable to code", "write code", "write a plugin", "bukkit plugin",
+		}
+		for _, phrase := range directAddressPhrases {
+			if strings.Contains(text, phrase) {
+				return true
+			}
 		}
 
 	}
@@ -131,7 +164,17 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 	}
 
 	if !t.mentions(ctx, msg) {
-		log.Printf("Ignoring message: %v", msg)
+		chatID := ""
+		msgID := ""
+		text := ""
+		if msg.Chat != nil {
+			chatID = msg.Chat.ID
+		}
+		if msg.Content != nil {
+			text = msg.Content.Text
+		}
+		msgID = msg.ID
+		log.Printf("Ignoring Telegram message %s in chat %s; not addressed to bot. text=%q", msgID, chatID, text)
 		return nil
 	}
 
@@ -161,6 +204,18 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 	reply, err := t.Agent.Generate(ctx, *msg)
 
 	if err != nil {
+		log.Printf("Agent failed to generate reply: %v", err)
+		messageID, _ := strconv.Atoi(msg.ID)
+		_, sendErr := t.botHandler.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: msg.Chat.ID,
+			Text:   "Sorry, I hit an internal error while generating a response. Try again or check the logs.",
+			ReplyParameters: &models.ReplyParameters{
+				MessageID: messageID,
+			},
+		})
+		if sendErr != nil {
+			log.Printf("Failed to send agent error message: %v", sendErr)
+		}
 		return err
 	}
 
@@ -191,7 +246,17 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 	}
 
 	if err != nil {
-		return err
+		log.Printf("Failed to send Telegram reply with Markdown, retrying as plain text: %v", err)
+		sentMsg, err = t.botHandler.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: msg.Chat.ID,
+			Text:   reply.Content.Text,
+			ReplyParameters: &models.ReplyParameters{
+				MessageID: messageID,
+			},
+		})
+		if err != nil {
+			return err
+		}
 	}
 	log.Printf("Sent message: %v", sentMsg)
 

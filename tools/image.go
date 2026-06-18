@@ -69,14 +69,14 @@ func (t *ImageGeneratorTool) generate(ctx context.Context, input ImageGeneratorI
 	}
 
 	requestBody := map[string]any{
-		"model":           model,
-		"prompt":          input.Prompt,
-		"size":            input.Size,
-		"response_format": "b64_json",
+		"model":  model,
+		"prompt": input.Prompt,
+		"size":   input.Size,
 	}
-	if model == "gpt-image-1" {
-		// gpt-image-1 returns b64_json by default and rejects response_format.
-		delete(requestBody, "response_format")
+	if model == "dall-e-2" {
+		// dall-e-2 still accepts response_format. Newer image models may reject it
+		// and return a temporary URL by default, which we download below.
+		requestBody["response_format"] = "b64_json"
 	}
 	body, _ := json.Marshal(requestBody)
 

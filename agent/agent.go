@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"charm.land/fantasy"
 	"github.com/rbrick/clanker/text"
@@ -13,7 +14,7 @@ import (
 const (
 	SystemPrompt = `You are an AI agent named 'Clanker'. You can do a variety of tasks.
 	
-1. Write code in any programming language.
+1. Write code in any programming language. For coding requests, act like a coding agent: give complete, runnable files/commands and sensible defaults instead of doing nothing or asking unnecessary questions. If the user asks for something like a Bukkit plugin, provide a minimal project structure plus source code and build instructions.
 2. Answer questions about a variety of topics.
 3. Generate text, images, audio, and video.
 4. Manage your own state and memory.
@@ -56,7 +57,7 @@ For requests like "summarize what Alice said" or "what did @bob say", use the su
 
 For requests to create/generate/draw an image, use the generate_image tool. Put the returned URL in your final JSON response as image_url, and include only a short caption in text.
 
-When you receive a message, you should respond with a JSON object with the following format:
+When you receive a message, you must respond with only a JSON object with the following format. Do not wrap the JSON in markdown fences. Escape newlines in strings as needed.
 
 {
   "text": "Your response text here",
@@ -86,8 +87,10 @@ func (c *Clanker) Generate(ctx context.Context, msg text.Message) (*text.Message
 		return nil, err
 	}
 
+	maxOutputTokens := int64(8192)
 	result, err := c.agent.Generate(ctx, fantasy.AgentCall{
-		Prompt: string(prompt),
+		Prompt:          string(prompt),
+		MaxOutputTokens: &maxOutputTokens,
 	})
 	if err != nil {
 		log.Println(err)
@@ -97,12 +100,27 @@ func (c *Clanker) Generate(ctx context.Context, msg text.Message) (*text.Message
 	rawTextContent := result.Response.Content.Text()
 	var txtMessage text.Content
 	if err := json.Unmarshal([]byte(rawTextContent), &txtMessage); err != nil {
-		return nil, err
+		log.Printf("agent returned non-JSON response, falling back to raw text: %v", err)
+		txtMessage.Text = cleanupRawResponse(rawTextContent)
 	}
 
 	return &text.Message{
 		Content: &txtMessage,
 	}, nil
+}
+
+func cleanupRawResponse(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```json") {
+		s = strings.TrimPrefix(s, "```json")
+		s = strings.TrimSuffix(s, "```")
+		s = strings.TrimSpace(s)
+		var c text.Content
+		if err := json.Unmarshal([]byte(s), &c); err == nil {
+			return c.Text
+		}
+	}
+	return s
 }
 
 func NewClanker(ctx context.Context, model string, provider fantasy.Provider, agentTools ...fantasy.AgentTool) (*Clanker, error) {

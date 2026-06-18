@@ -21,6 +21,13 @@ type Snippet = {
   updated_at: string
 }
 
+type FileTreeNode = {
+  name: string
+  path: string
+  children: Map<string, FileTreeNode>
+  file?: SnippetFile
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_CLANKER_API_URL ?? 'http://localhost:8080'
 
 export default function SnippetPage() {
@@ -47,6 +54,7 @@ export default function SnippetPage() {
   }, [params.id])
 
   const selected = snippet?.files?.find((file) => file.id === selectedFileID) ?? snippet?.files?.[0] ?? null
+  const tree = useMemo(() => buildFileTree(snippet?.files ?? []), [snippet?.files])
   const gitURL = useMemo(() => {
     if (!snippet?.git_url) return ''
     if (typeof window === 'undefined') return snippet.git_url
@@ -79,18 +87,72 @@ export default function SnippetPage() {
                   <code>git clone {gitURL}</code>
                 </div>
               )}
-              {snippet.files?.map((file) => (
-                <button key={file.id} className={`card ${selected?.id === file.id ? 'active' : ''}`} onClick={() => setSelectedFileID(file.id)}>
-                  <strong>{file.path || 'snippet'}</strong>
-                  <div className="meta">{file.language || 'plaintext'}</div>
-                </button>
-              ))}
+              <FileTree nodes={tree} selectedFileID={selected?.id ?? ''} onSelect={setSelectedFileID} />
             </div>
             <FileViewer file={selected} />
           </div>
         )}
       </section>
     </main>
+  )
+}
+
+function buildFileTree(files: SnippetFile[]) {
+  const root = new Map<string, FileTreeNode>()
+  for (const file of files) {
+    const displayPath = file.path || 'snippet'
+    const parts = displayPath.split('/').filter(Boolean)
+    let level = root
+    let currentPath = ''
+    parts.forEach((part, index) => {
+      currentPath = currentPath ? `${currentPath}/${part}` : part
+      let node = level.get(part)
+      if (!node) {
+        node = { name: part, path: currentPath, children: new Map() }
+        level.set(part, node)
+      }
+      if (index === parts.length - 1) node.file = file
+      level = node.children
+    })
+  }
+  return sortNodes(root)
+}
+
+function sortNodes(nodes: Map<string, FileTreeNode>): FileTreeNode[] {
+  return [...nodes.values()]
+    .map((node) => ({ ...node, children: new Map(sortNodes(node.children).map((child) => [child.name, child])) }))
+    .sort((a, b) => {
+      if (!a.file && b.file) return -1
+      if (a.file && !b.file) return 1
+      return a.name.localeCompare(b.name)
+    })
+}
+
+function FileTree({ nodes, selectedFileID, onSelect }: { nodes: FileTreeNode[], selectedFileID: string, onSelect: (id: string) => void }) {
+  if (nodes.length === 0) return <div className="empty">No files in this snippet.</div>
+  return <div className="file-tree">{nodes.map((node) => <FileTreeItem key={node.path} node={node} selectedFileID={selectedFileID} onSelect={onSelect} depth={0} />)}</div>
+}
+
+function FileTreeItem({ node, selectedFileID, onSelect, depth }: { node: FileTreeNode, selectedFileID: string, onSelect: (id: string) => void, depth: number }) {
+  const children = [...node.children.values()]
+  const isFile = Boolean(node.file)
+  if (isFile) {
+    return (
+      <button className={`tree-row file ${selectedFileID === node.file?.id ? 'active' : ''}`} style={{ paddingLeft: 12 + depth * 16 }} onClick={() => node.file && onSelect(node.file.id)}>
+        <span className="tree-icon">📄</span>
+        <span className="tree-name">{node.name}</span>
+        {node.file?.language && <span className="tree-lang">{node.file.language}</span>}
+      </button>
+    )
+  }
+  return (
+    <div className="tree-dir">
+      <div className="tree-row dir" style={{ paddingLeft: 12 + depth * 16 }}>
+        <span className="tree-icon">📁</span>
+        <span className="tree-name">{node.name}</span>
+      </div>
+      {children.map((child) => <FileTreeItem key={child.path} node={child} selectedFileID={selectedFileID} onSelect={onSelect} depth={depth + 1} />)}
+    </div>
   )
 }
 

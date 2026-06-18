@@ -34,7 +34,7 @@ func (s *SnippetsTool) Tools() []fantasy.AgentTool {
 	return []fantasy.AgentTool{
 		fantasy.NewAgentTool[SnippetsToolInput](
 			"create_snippet",
-			"create a shareable code snippet. Supports either content/language for one file or files for multi-file snippets. The response includes a URL that should be sent to the user.",
+			"create a shareable code/project snippet. Supports either content/language for one file or files for multi-file snippets. The response includes a web URL that should be sent to the user. A git_url may also be present; if it is empty or unavailable, the web URL is still valid.",
 			func(ctx context.Context, input SnippetsToolInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 				files := make([]snippets.File, 0, len(input.Files))
 				for _, file := range input.Files {

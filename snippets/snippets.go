@@ -2,6 +2,7 @@ package snippets
 
 import (
 	"context"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
@@ -85,7 +86,10 @@ func (s *Snippets) CreateSnippetWithFiles(files []File) (*models.Snippet, error)
 	}
 
 	if err := s.createGitRepo(context.Background(), snippet.ID, normalizedFiles); err != nil {
-		return nil, err
+		// A git clone URL is a convenience feature for snippets, not the source of
+		// truth. Keep the web snippet usable even if git repo materialization or
+		// object storage has a transient/configuration failure.
+		log.Printf("failed to create git repo for snippet %s; continuing with web snippet: %v", snippet.ID, err)
 	}
 
 	return s.GetSnippetByID(snippet.ID)

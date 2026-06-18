@@ -65,7 +65,7 @@ func (t *ImageGeneratorTool) generate(ctx context.Context, input ImageGeneratorI
 
 	model := os.Getenv("IMAGE_MODEL")
 	if model == "" {
-		model = "dall-e-3"
+		model = "gpt-image-1"
 	}
 
 	requestBody := map[string]any{
@@ -73,9 +73,9 @@ func (t *ImageGeneratorTool) generate(ctx context.Context, input ImageGeneratorI
 		"prompt": input.Prompt,
 		"size":   input.Size,
 	}
-	if model == "dall-e-2" {
-		// dall-e-2 still accepts response_format. Newer image models may reject it
-		// and return a temporary URL by default, which we download below.
+	if model == "dall-e-2" || model == "dall-e-3" {
+		// Legacy DALL-E models accept response_format. Newer image models may
+		// reject it and return b64_json/default data without this parameter.
 		requestBody["response_format"] = "b64_json"
 	}
 	body, _ := json.Marshal(requestBody)

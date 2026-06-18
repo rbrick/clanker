@@ -22,6 +22,7 @@ import (
 	"github.com/rbrick/clanker/database/models"
 	"github.com/rbrick/clanker/env"
 	"github.com/rbrick/clanker/media"
+	"github.com/rbrick/clanker/objectstore"
 	"github.com/rbrick/clanker/platform"
 	"github.com/rbrick/clanker/snippets"
 	"github.com/rbrick/clanker/summarize"
@@ -84,7 +85,7 @@ func initializeDatabase() (*gorm.DB, error) {
 		return nil, err
 	}
 
-	database.Migrate(db, models.ChatMessage{}, models.AllowlistEntry{}, models.Snippet{}, models.SnippetFile{}, models.Blob{})
+	database.Migrate(db, models.ChatMessage{}, models.AllowlistEntry{}, models.Snippet{}, models.SnippetFile{}, models.SnippetGitFile{}, models.Blob{})
 
 	return db, nil
 }
@@ -102,14 +103,37 @@ func main() {
 
 	history := chat.NewChatHistory(database.NewRepository[models.ChatMessage](DB))
 	summarizer := summarize.NewService(llm)
-	snippetStore := snippets.NewSnippets(database.NewRepository[models.Snippet](DB), database.NewRepository[models.SnippetFile](DB))
+	publicBaseURL := env.GetEnv("PUBLIC_BASE_URL", "http://localhost"+env.GetEnv("API_ADDR", ":8080"))
+	snippetOptions := []snippets.Option{
+		snippets.WithGitStore(snippets.NewGitStore(), database.NewRepository[models.SnippetGitFile](DB), publicBaseURL),
+	}
+	if bucket := os.Getenv("AWS_S3_BUCKET_NAME"); bucket != "" {
+		bucketStore, err := objectstore.NewS3Store(context.Background(), objectstore.S3Config{
+			Bucket:          bucket,
+			Region:          os.Getenv("AWS_DEFAULT_REGION"),
+			Endpoint:        os.Getenv("AWS_ENDPOINT_URL"),
+			AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
+			SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+			Prefix:          os.Getenv("AWS_S3_PREFIX"),
+			ForcePathStyle:  env.GetEnv("AWS_S3_FORCE_PATH_STYLE", "true") == "true",
+		})
+		if err != nil {
+			panic(err)
+		}
+		snippetOptions = []snippets.Option{snippets.WithGitObjectStore(snippets.NewGitStore(), bucketStore, publicBaseURL)}
+	}
+	snippetStore := snippets.NewSnippets(
+		database.NewRepository[models.Snippet](DB),
+		database.NewRepository[models.SnippetFile](DB),
+		snippetOptions...,
+	)
 	mediaStore := media.NewStore(database.NewRepository[models.Blob](DB))
 	allowlistStore := allowlist.NewAllowlist(database.NewRepository[models.AllowlistEntry](DB))
 
 	internalTools := []fantasy.AgentTool{}
 	internalTools = append(internalTools, tools.NewChatHistoryTool(history, summarizer).Tools()...)
 	internalTools = append(internalTools, tools.NewSnippetsTool(snippetStore).Tools()...)
-	internalTools = append(internalTools, tools.NewImageGeneratorTool(mediaStore, env.GetEnv("PUBLIC_BASE_URL", "http://localhost"+env.GetEnv("API_ADDR", ":8080"))).Tools()...)
+	internalTools = append(internalTools, tools.NewImageGeneratorTool(mediaStore, publicBaseURL).Tools()...)
 
 	clanker, err := makeAgent(provider, internalTools...)
 	if err != nil {

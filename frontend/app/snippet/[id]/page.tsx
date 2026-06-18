@@ -16,6 +16,7 @@ type SnippetFile = {
 type Snippet = {
   id: string
   files: SnippetFile[]
+  git_url?: string
   created_at: string
   updated_at: string
 }
@@ -60,6 +61,11 @@ export default function SnippetPage() {
           <div className="grid">
             <div className="list">
               <div className="meta">{snippet.id}</div>
+              {snippet.git_url && (
+                <div className="meta">
+                  <code>git clone {snippet.git_url}</code>
+                </div>
+              )}
               {snippet.files?.map((file) => (
                 <button key={file.id} className={`card ${selected?.id === file.id ? 'active' : ''}`} onClick={() => setSelectedFileID(file.id)}>
                   <strong>{file.path || 'snippet'}</strong>

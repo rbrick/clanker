@@ -10,6 +10,7 @@ import (
 type Snippet struct {
 	ID        uuid.UUID     `json:"id" gorm:"column:id;type:uuid;primaryKey"`
 	Files     []SnippetFile `json:"files" gorm:"foreignKey:SnippetID"`
+	GitURL    string        `json:"git_url,omitempty" gorm:"-"`
 	CreatedAt time.Time     `json:"created_at" gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt time.Time     `json:"updated_at" gorm:"column:updated_at;autoUpdateTime"`
 }

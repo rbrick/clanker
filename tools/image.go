@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/rbrick/clanker/media"
@@ -36,7 +38,8 @@ func (t *ImageGeneratorTool) Tools() []fantasy.AgentTool {
 			func(ctx context.Context, input ImageGeneratorInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 				url, err := t.generate(ctx, input)
 				if err != nil {
-					return fantasy.NewTextResponse(err.Error()), err
+					log.Printf("image generation failed: %v", err)
+					return fantasy.NewTextResponse("image generation failed: " + err.Error()), nil
 				}
 				out, _ := json.Marshal(map[string]string{"image_url": url})
 				return fantasy.NewTextResponse(string(out)), nil
@@ -46,6 +49,9 @@ func (t *ImageGeneratorTool) Tools() []fantasy.AgentTool {
 }
 
 func (t *ImageGeneratorTool) generate(ctx context.Context, input ImageGeneratorInput) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		apiKey = os.Getenv("LLM_API_KEY")
@@ -57,15 +63,22 @@ func (t *ImageGeneratorTool) generate(ctx context.Context, input ImageGeneratorI
 		input.Size = "1024x1024"
 	}
 
-	body, _ := json.Marshal(map[string]any{
-		"model":           os.Getenv("IMAGE_MODEL"),
+	model := os.Getenv("IMAGE_MODEL")
+	if model == "" {
+		model = "dall-e-3"
+	}
+
+	requestBody := map[string]any{
+		"model":           model,
 		"prompt":          input.Prompt,
 		"size":            input.Size,
 		"response_format": "b64_json",
-	})
-	if os.Getenv("IMAGE_MODEL") == "" {
-		body, _ = json.Marshal(map[string]any{"model": "gpt-image-1", "prompt": input.Prompt, "size": input.Size})
 	}
+	if model == "gpt-image-1" {
+		// gpt-image-1 returns b64_json by default and rejects response_format.
+		delete(requestBody, "response_format")
+	}
+	body, _ := json.Marshal(requestBody)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/images/generations", bytes.NewReader(body))
 	if err != nil {
@@ -74,7 +87,9 @@ func (t *ImageGeneratorTool) generate(ctx context.Context, input ImageGeneratorI
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	log.Printf("generating image with model=%s size=%s", model, input.Size)
+	client := &http.Client{Timeout: 2 * time.Minute}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -87,21 +102,51 @@ func (t *ImageGeneratorTool) generate(ctx context.Context, input ImageGeneratorI
 	var parsed struct {
 		Data []struct {
 			B64JSON string `json:"b64_json"`
+			URL     string `json:"url"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return "", err
 	}
-	if len(parsed.Data) == 0 || parsed.Data[0].B64JSON == "" {
+	if len(parsed.Data) == 0 {
 		return "", fmt.Errorf("image generation returned no image data")
 	}
-	data, err := base64.StdEncoding.DecodeString(parsed.Data[0].B64JSON)
-	if err != nil {
-		return "", err
+
+	var data []byte
+	if parsed.Data[0].B64JSON != "" {
+		data, err = base64.StdEncoding.DecodeString(parsed.Data[0].B64JSON)
+		if err != nil {
+			return "", err
+		}
+	} else if parsed.Data[0].URL != "" {
+		data, err = downloadImage(ctx, client, parsed.Data[0].URL)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		return "", fmt.Errorf("image generation returned no image data")
 	}
 	blob, err := t.store.Save("image/png", data)
 	if err != nil {
 		return "", err
 	}
-	return media.PublicURL(t.baseURL, blob.ID), nil
+	url := media.PublicURL(t.baseURL, blob.ID)
+	log.Printf("generated image stored as %s", url)
+	return url, nil
+}
+
+func downloadImage(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("image download failed: %s", resp.Status)
+	}
+	return io.ReadAll(resp.Body)
 }

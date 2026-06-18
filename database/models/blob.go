@@ -5,7 +5,7 @@ import "time"
 type Blob struct {
 	ID        string    `json:"id" gorm:"primaryKey;column:id"`
 	MediaType string    `json:"media_type" gorm:"column:media_type;index"`
-	Data      []byte    `json:"-" gorm:"column:data"`
+	Data      string    `json:"-" gorm:"column:data;type:text"` // Base64-encoded blob data.
 	CreatedAt time.Time `json:"created_at" gorm:"column:created_at"`
 }
 

@@ -2,6 +2,7 @@ package media
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"strings"
 
@@ -22,11 +23,15 @@ func (s *Store) Save(mediaType string, data []byte) (*models.Blob, error) {
 	if err != nil {
 		return nil, err
 	}
-	blob := &models.Blob{ID: id, MediaType: mediaType, Data: data}
+	blob := &models.Blob{ID: id, MediaType: mediaType, Data: base64.StdEncoding.EncodeToString(data)}
 	if err := s.repo.Create(blob); err != nil {
 		return nil, err
 	}
 	return blob, nil
+}
+
+func (s *Store) Decode(blob *models.Blob) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(blob.Data)
 }
 
 func (s *Store) Get(id string) (*models.Blob, error) {

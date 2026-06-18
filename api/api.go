@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
@@ -34,6 +35,7 @@ func (s *Server) Start(ctx context.Context) error {
 	})
 	e.GET("/snippet/:id", s.handleSnippet)
 	e.GET("/media/:id", s.handleMedia)
+	e.GET("/git/:repo/*", s.handleGitFile)
 
 	srv := &http.Server{Addr: s.addr, Handler: e}
 	go func() {
@@ -69,7 +71,33 @@ func (s *Server) handleMedia(c *echo.Context) error {
 	if blob == nil {
 		return writeError(c, http.StatusNotFound, "media not found")
 	}
-	return c.Blob(http.StatusOK, blob.MediaType, blob.Data)
+	data, err := s.media.Decode(blob)
+	if err != nil {
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	return c.Blob(http.StatusOK, blob.MediaType, data)
+}
+
+func (s *Server) handleGitFile(c *echo.Context) error {
+	repoName := c.Param("repo")
+	idText := strings.TrimSuffix(repoName, ".git")
+	id, err := uuid.Parse(idText)
+	if err != nil {
+		return writeError(c, http.StatusBadRequest, "invalid repository")
+	}
+
+	requested := strings.TrimPrefix(c.Param("*"), "/")
+	if requested == "" || strings.HasPrefix(requested, "../") || strings.Contains(requested, "/../") || strings.HasPrefix(requested, "/") {
+		return writeError(c, http.StatusBadRequest, "invalid path")
+	}
+	data, contentType, err := s.snippets.GetGitFile(c.Request().Context(), id, requested)
+	if err != nil {
+		return writeError(c, http.StatusInternalServerError, err.Error())
+	}
+	if data == nil {
+		return writeError(c, http.StatusNotFound, "git object not found")
+	}
+	return c.Blob(http.StatusOK, contentType, data)
 }
 
 func writeError(c *echo.Context, status int, msg string) error {

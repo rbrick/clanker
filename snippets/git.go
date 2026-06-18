@@ -25,13 +25,6 @@ func (g *GitStore) BuildRepo(ctx context.Context, id uuid.UUID, files []File) (m
 	}
 	defer os.RemoveAll(workDir)
 
-	bareDir, err := os.MkdirTemp("", "clanker-snippet-bare-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(bareDir)
-	bareRepo := filepath.Join(bareDir, id.String()+".git")
-
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -67,9 +60,7 @@ func (g *GitStore) BuildRepo(ctx context.Context, id uuid.UUID, files []File) (m
 		return nil, fmt.Errorf("git commit failed: %w", err)
 	}
 
-	if _, err := git.PlainCloneContext(ctx, bareRepo, true, &git.CloneOptions{URL: workDir}); err != nil {
-		return nil, fmt.Errorf("git clone --bare failed: %w", err)
-	}
+	bareRepo := filepath.Join(workDir, ".git")
 	if err := writeDumbHTTPInfo(bareRepo, commitHash.String()); err != nil {
 		return nil, fmt.Errorf("git update-server-info failed: %w", err)
 	}

@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/google/uuid"
 )
 
@@ -31,6 +33,9 @@ func (g *GitStore) BuildRepo(ctx context.Context, id uuid.UUID, files []File) (m
 	bareRepo := filepath.Join(bareDir, id.String()+".git")
 
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		name := cleanSnippetPath(file.Path)
 		if name == "" {
 			name = "snippet"
@@ -44,21 +49,29 @@ func (g *GitStore) BuildRepo(ctx context.Context, id uuid.UUID, files []File) (m
 		}
 	}
 
-	commands := [][]string{
-		{"git", "init"},
-		{"git", "config", "user.name", "Clanker"},
-		{"git", "config", "user.email", "clanker@localhost"},
-		{"git", "add", "."},
-		{"git", "commit", "-m", "Initial snippet"},
-		{"git", "clone", "--bare", workDir, bareRepo},
-		{"git", "--git-dir", bareRepo, "update-server-info"},
+	repo, err := git.PlainInit(workDir, false)
+	if err != nil {
+		return nil, fmt.Errorf("git init failed: %w", err)
 	}
-	for _, args := range commands {
-		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-		cmd.Dir = workDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("%s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-		}
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return nil, fmt.Errorf("git worktree failed: %w", err)
+	}
+	if _, err := worktree.Add("."); err != nil {
+		return nil, fmt.Errorf("git add failed: %w", err)
+	}
+	commitHash, err := worktree.Commit("Initial snippet", &git.CommitOptions{
+		Author: &object.Signature{Name: "Clanker", Email: "clanker@localhost", When: time.Now()},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("git commit failed: %w", err)
+	}
+
+	if _, err := git.PlainCloneContext(ctx, bareRepo, true, &git.CloneOptions{URL: workDir}); err != nil {
+		return nil, fmt.Errorf("git clone --bare failed: %w", err)
+	}
+	if err := writeDumbHTTPInfo(bareRepo, commitHash.String()); err != nil {
+		return nil, fmt.Errorf("git update-server-info failed: %w", err)
 	}
 
 	repoFiles := map[string][]byte{}
@@ -81,6 +94,32 @@ func (g *GitStore) BuildRepo(ctx context.Context, id uuid.UUID, files []File) (m
 	}
 
 	return repoFiles, nil
+}
+
+func writeDumbHTTPInfo(bareRepo, headHash string) error {
+	infoDir := filepath.Join(bareRepo, "info")
+	objectsInfoDir := filepath.Join(bareRepo, "objects", "info")
+	if err := os.MkdirAll(infoDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(objectsInfoDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(infoDir, "refs"), []byte(headHash+"\trefs/heads/master\n"), 0o644); err != nil {
+		return err
+	}
+
+	packEntries, err := filepath.Glob(filepath.Join(bareRepo, "objects", "pack", "*.pack"))
+	if err != nil {
+		return err
+	}
+	var packs strings.Builder
+	for _, pack := range packEntries {
+		packs.WriteString("P ")
+		packs.WriteString(filepath.Base(pack))
+		packs.WriteByte('\n')
+	}
+	return os.WriteFile(filepath.Join(objectsInfoDir, "packs"), []byte(packs.String()), 0o644)
 }
 
 func cleanSnippetPath(name string) string {

@@ -1,46 +1,71 @@
 package snippets
 
 import (
+	"github.com/google/uuid"
 	"github.com/rbrick/clanker/database"
 	"github.com/rbrick/clanker/database/models"
 )
 
-type Snippets struct {
-	repo database.Repository[models.Snippet]
+type File struct {
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	Language string `json:"language"`
 }
 
-func NewSnippets(repo database.Repository[models.Snippet]) *Snippets {
-	return &Snippets{repo: repo}
+type Snippets struct {
+	snippetRepo database.Repository[models.Snippet]
+	fileRepo    database.Repository[models.SnippetFile]
+}
+
+func NewSnippets(snippetRepo database.Repository[models.Snippet], fileRepo database.Repository[models.SnippetFile]) *Snippets {
+	return &Snippets{snippetRepo: snippetRepo, fileRepo: fileRepo}
 }
 
 func (s *Snippets) CreateSnippet(content, language string) (*models.Snippet, error) {
-	snippet := &models.Snippet{
-		Content:  content,
-		Language: language,
+	return s.CreateSnippetWithFiles([]File{{Path: "snippet", Content: content, Language: language}})
+}
+
+func (s *Snippets) CreateSnippetWithFiles(files []File) (*models.Snippet, error) {
+	if len(files) == 0 {
+		files = []File{{Path: "snippet"}}
 	}
 
-	if err := s.repo.Create(snippet); err != nil {
+	snippet := &models.Snippet{}
+	if err := s.snippetRepo.Create(snippet); err != nil {
 		return nil, err
 	}
 
-	return snippet, nil
+	for _, file := range files {
+		path := file.Path
+		if path == "" {
+			path = "snippet"
+		}
+		if err := s.fileRepo.Create(&models.SnippetFile{
+			SnippetID: snippet.ID,
+			Path:      path,
+			Content:   file.Content,
+			Language:  file.Language,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	return s.GetSnippetByID(snippet.ID)
 }
 
-func (s *Snippets) GetAllSnippets() ([]models.Snippet, error) {
-	return s.repo.FindAll()
-}
-
-func (s *Snippets) GetSnippetsByLanguage(language string) ([]models.Snippet, error) {
-	return s.repo.Where("language = ?", language)
-}
-
-func (s *Snippets) GetSnippetByID(id int) (*models.Snippet, error) {
-	snippets, err := s.repo.Where("id = ?", id)
+func (s *Snippets) GetSnippetByID(id uuid.UUID) (*models.Snippet, error) {
+	snippets, err := s.snippetRepo.Where("id = ?", id)
 	if err != nil {
 		return nil, err
 	}
 	if len(snippets) == 0 {
 		return nil, nil
 	}
+
+	files, err := s.fileRepo.Where("snippet_id = ?", id)
+	if err != nil {
+		return nil, err
+	}
+	snippets[0].Files = files
 	return &snippets[0], nil
 }

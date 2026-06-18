@@ -3,8 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
 
 	"charm.land/fantasy"
+	"github.com/google/uuid"
+	"github.com/rbrick/clanker/database/models"
 	"github.com/rbrick/clanker/snippets"
 )
 
@@ -13,26 +18,46 @@ type SnippetsTool struct {
 }
 
 func (s *SnippetsTool) Tools() []fantasy.AgentTool {
-	type SnippetsToolInput struct {
+	type SnippetFileInput struct {
+		Path     string `json:"path" jsonschema:"description=File path or display name"`
 		Content  string `json:"content"`
 		Language string `json:"language"`
 	}
-
+	type SnippetsToolInput struct {
+		Content  string             `json:"content" jsonschema:"description=Single-file snippet content; ignored when files is provided"`
+		Language string             `json:"language" jsonschema:"description=Single-file snippet language; ignored when files is provided"`
+		Files    []SnippetFileInput `json:"files" jsonschema:"description=Multiple files for this snippet"`
+	}
 	type GetSnippetByIDInput struct {
-		ID int `json:"id"`
+		ID string `json:"id"`
 	}
 	return []fantasy.AgentTool{
 		fantasy.NewAgentTool[SnippetsToolInput](
-
 			"create_snippet",
-			"create a code snippet with the given content and programming language",
+			"create a shareable code snippet. Supports either content/language for one file or files for multi-file snippets. The response includes a URL that should be sent to the user.",
 			func(ctx context.Context, input SnippetsToolInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-				snippet, err := s.snippets.CreateSnippet(input.Content, input.Language)
+				files := make([]snippets.File, 0, len(input.Files))
+				for _, file := range input.Files {
+					files = append(files, snippets.File{Path: file.Path, Content: file.Content, Language: file.Language})
+				}
+
+				var snippet *models.Snippet
+				var err error
+				if len(files) > 0 {
+					snippet, err = s.snippets.CreateSnippetWithFiles(files)
+				} else {
+					snippet, err = s.snippets.CreateSnippet(input.Content, input.Language)
+				}
 				if err != nil {
 					return fantasy.NewTextResponse(err.Error()), err
 				}
 
-				jsonResponse, err := json.Marshal(snippet)
+				payload := struct {
+					Snippet any    `json:"snippet"`
+					URL     string `json:"url"`
+				}{Snippet: snippet, URL: snippetURL(fmt.Sprint(snippet.ID))}
+
+				jsonResponse, err := json.Marshal(payload)
 				if err != nil {
 					return fantasy.NewTextResponse(err.Error()), err
 				}
@@ -42,9 +67,13 @@ func (s *SnippetsTool) Tools() []fantasy.AgentTool {
 
 		fantasy.NewAgentTool[GetSnippetByIDInput](
 			"get_snippet_by_id",
-			"get a code snippet by its ID",
+			"get a code snippet by its UUID",
 			func(ctx context.Context, input GetSnippetByIDInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-				snippet, err := s.snippets.GetSnippetByID(input.ID)
+				id, err := uuid.Parse(input.ID)
+				if err != nil {
+					return fantasy.NewTextResponse("invalid snippet id"), err
+				}
+				snippet, err := s.snippets.GetSnippetByID(id)
 				if err != nil {
 					return fantasy.NewTextResponse(err.Error()), err
 				}
@@ -59,6 +88,17 @@ func (s *SnippetsTool) Tools() []fantasy.AgentTool {
 			},
 		),
 	}
+}
+
+func snippetURL(id string) string {
+	base := strings.TrimRight(os.Getenv("SNIPPET_BASE_URL"), "/")
+	if base == "" {
+		base = strings.TrimRight(os.Getenv("PUBLIC_WEB_URL"), "/")
+	}
+	if base == "" {
+		return "/snippet/" + id
+	}
+	return base + "/snippet/" + id
 }
 
 func NewSnippetsTool(snippets *snippets.Snippets) *SnippetsTool {

@@ -3,6 +3,7 @@ package text
 type Chatter struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
+	Name     string `json:"name,omitempty"`
 }
 
 type Content struct {
@@ -20,6 +21,7 @@ type Chat struct {
 type Message struct {
 	// Message ID from the given platform, used for replying to the message
 	ID        string   `json:"id"`
+	Timestamp int64    `json:"timestamp,omitempty"`
 	Platform  string   `json:"platform"`
 	RepliedTo *Chatter `json:"replied_to,omitempty"` // The message this message is replying to, if any
 	Sender    *Chatter `json:"sender,omitempty"`

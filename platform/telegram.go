@@ -10,6 +10,8 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/rbrick/clanker/agent"
 	"github.com/rbrick/clanker/allowlist"
+	"github.com/rbrick/clanker/chat"
+	dbmodels "github.com/rbrick/clanker/database/models"
 	"github.com/rbrick/clanker/text"
 )
 
@@ -18,16 +20,28 @@ type TelegramPlatform struct {
 	botHandler *bot.Bot
 	Agent      agent.Agent
 
-	Allowlist *allowlist.Allowlist
+	Allowlist   *allowlist.Allowlist
+	ChatHistory *chat.ChatHistory
 }
 
-func (*TelegramPlatform) Init() error {
-	// botHandler, err := bot.New()
+func (t *TelegramPlatform) Init() error {
+	botHandler, err := bot.New(t.BotKey, bot.WithDefaultHandler(t.handle))
+	if err != nil {
+		return err
+	}
+	t.botHandler = botHandler
 	return nil
 }
 
-func (*TelegramPlatform) Start(ctx context.Context) error {
-	return nil
+func (t *TelegramPlatform) Start(ctx context.Context) error {
+	t.botHandler.Start(ctx)
+	return ctx.Err()
+}
+
+func (t *TelegramPlatform) Config() *PlatformConfig {
+	return &PlatformConfig{
+		Instructions: "You are responding on Telegram. Keep replies concise and compatible with Telegram Markdown.",
+	}
 }
 
 func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -37,11 +51,16 @@ func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *model
 	}
 
 	if update.Message != nil {
+		if update.Message.From == nil {
+			return
+		}
+
 		msg := &text.Message{
 			Platform: "telegram",
 			Sender: &text.Chatter{
-				ID:       strconv.Itoa(int(update.Message.Chat.ID)),
-				Username: update.Message.Chat.Username,
+				ID:       strconv.Itoa(int(update.Message.From.ID)),
+				Username: update.Message.From.Username,
+				Name:     strings.TrimSpace(update.Message.From.FirstName + " " + update.Message.From.LastName),
 			},
 			Content: &text.Content{
 				Text: update.Message.Text,
@@ -50,13 +69,15 @@ func (t *TelegramPlatform) handle(ctx context.Context, b *bot.Bot, update *model
 				ID:   strconv.Itoa(int(update.Message.Chat.ID)),
 				Type: string(update.Message.Chat.Type),
 			},
-			ID: strconv.Itoa(update.Message.ID),
+			ID:        strconv.Itoa(update.Message.ID),
+			Timestamp: int64(update.Message.Date),
 		}
 
 		if update.Message.ReplyToMessage != nil {
 			msg.RepliedTo = &text.Chatter{
 				ID:       strconv.Itoa(int(update.Message.ReplyToMessage.From.ID)),
 				Username: update.Message.ReplyToMessage.From.Username,
+				Name:     strings.TrimSpace(update.Message.ReplyToMessage.From.FirstName + " " + update.Message.ReplyToMessage.From.LastName),
 			}
 		}
 
@@ -101,6 +122,10 @@ func mustAtoi(s string) int {
 }
 
 func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message) error {
+
+	if err := t.saveMessage(msg); err != nil {
+		log.Printf("Error saving chat message: %v", err)
+	}
 
 	if !t.mentions(ctx, msg) {
 		log.Printf("Ignoring message: %v", msg)
@@ -149,12 +174,55 @@ func (t *TelegramPlatform) HandleMessage(ctx context.Context, msg *text.Message)
 		return err
 	}
 	log.Printf("Sent message: %v", sentMsg)
+
+	if sentMsg.From != nil {
+		if err := t.saveMessage(&text.Message{
+			ID:        strconv.Itoa(sentMsg.ID),
+			Timestamp: int64(sentMsg.Date),
+			Platform:  msg.Platform,
+			Chat:      msg.Chat,
+			Sender: &text.Chatter{
+				ID:       strconv.Itoa(int(sentMsg.From.ID)),
+				Username: sentMsg.From.Username,
+				Name:     strings.TrimSpace(sentMsg.From.FirstName + " " + sentMsg.From.LastName),
+			},
+			Content: reply.Content,
+		}); err != nil {
+			log.Printf("Error saving bot chat message: %v", err)
+		}
+	}
+
 	return nil
 }
 
-func NewTelegramPlatform(botKey string, a agent.Agent) *TelegramPlatform {
+func (t *TelegramPlatform) saveMessage(msg *text.Message) error {
+	if t.ChatHistory == nil || msg == nil || msg.Chat == nil || msg.Sender == nil || msg.Content == nil {
+		return nil
+	}
+
+	var replyToID *int
+	if msg.RepliedTo != nil && msg.RepliedTo.ID != "" {
+		id := mustAtoi(msg.RepliedTo.ID)
+		replyToID = &id
+	}
+
+	return t.ChatHistory.SaveMessage(&dbmodels.ChatMessage{
+		Platform:       msg.Platform,
+		ChatID:         mustAtoi(msg.Chat.ID),
+		ReplyToID:      replyToID,
+		SenderID:       mustAtoi(msg.Sender.ID),
+		SenderUsername: msg.Sender.Username,
+		SenderName:     msg.Sender.Name,
+		Message:        msg.Content.Text,
+		Timestamp:      msg.Timestamp,
+	})
+}
+
+func NewTelegramPlatform(botKey string, a agent.Agent, allowlist *allowlist.Allowlist, history *chat.ChatHistory) *TelegramPlatform {
 	return &TelegramPlatform{
-		BotKey: botKey,
-		Agent:  a,
+		BotKey:      botKey,
+		Agent:       a,
+		Allowlist:   allowlist,
+		ChatHistory: history,
 	}
 }

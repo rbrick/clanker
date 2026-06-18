@@ -36,10 +36,17 @@ The message you receive will be in the following format:
   },
   "sender": {
     "id": "user123",
-	"username": "user123"
+	"username": "user123",
+	"name": "User Display Name"
+  },
+  "chat": {
+    "id": "12345",
+	"type": "group"
   },
   "platform": "telegram" // The platform the message was sent from
 }
+
+For requests like "summarize what Alice said" or "what did @bob say", use the summarize_chat_history tool with the current message's platform and chat.id, and pass the requested person as user.
 
 When you receive a message, you should respond with a JSON object with the following format:
 

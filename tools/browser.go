@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"log"
 
 	"charm.land/fantasy"
 	"github.com/chromedp/chromedp"
@@ -22,8 +21,6 @@ func (w *WebBrowserTool) Tools() []fantasy.AgentTool {
 			"web_browser",
 			"browse the web and retrieve information",
 			func(ctx context.Context, input WebBrowserToolInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-
-				log.Println("browser tool called", input.URL)
 				var result string
 				var buf []byte
 				err := chromedp.Run(w.ctx,

@@ -77,6 +77,7 @@ func (t *LinearTool) Tools() []fantasy.AgentTool {
 		Title       string `json:"title"`
 		Description string `json:"description"`
 		Priority    int    `json:"priority,omitempty"`
+		AssigneeID  string `json:"assignee_id,omitempty"`
 	}
 	type ChatInput struct {
 		Platform string `json:"platform"`
@@ -88,7 +89,7 @@ func (t *LinearTool) Tools() []fantasy.AgentTool {
 		TeamID   string `json:"team_id,omitempty"`
 	}
 	return []fantasy.AgentTool{
-		fantasy.NewAgentTool[ChatInput]("get_linear_context", "get a concise overview of the Linear workspace available to this chat, including teams and projects with IDs, keys/names, states, URLs, and project team associations. Use this first when a user asks to create a Linear ticket and refers to a team or project by name/key so you understand what is available.", func(ctx context.Context, input ChatInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		fantasy.NewAgentTool[ChatInput]("get_linear_context", "get a concise overview of the Linear workspace available to this chat, including teams, projects, and users with IDs. Use this first when a user asks to create a Linear ticket and refers to a team, project, or assignee by name/key/email so you understand what is available.", func(ctx context.Context, input ChatInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			var out struct {
 				Teams struct {
 					Nodes []struct{ ID, Key, Name string } `json:"nodes"`
@@ -101,8 +102,11 @@ func (t *LinearTool) Tools() []fantasy.AgentTool {
 						} `json:"teams"`
 					} `json:"nodes"`
 				} `json:"projects"`
+				Users struct {
+					Nodes []struct{ ID, Name, DisplayName, Email string } `json:"nodes"`
+				} `json:"users"`
 			}
-			query := "query { teams { nodes { id key name } } projects { nodes { id name url state teams { nodes { id key name } } } } }"
+			query := "query { teams { nodes { id key name } } projects { nodes { id name url state teams { nodes { id key name } } } } users { nodes { id name displayName email } } }"
 			msg, err := t.linearGraphQL(ctx, input.Platform, input.ChatID, query, nil, &out)
 			if msg != "" || err != nil {
 				return fantasy.NewTextResponse(msg), err
@@ -161,13 +165,29 @@ func (t *LinearTool) Tools() []fantasy.AgentTool {
 			b, _ := json.Marshal(projects)
 			return fantasy.NewTextResponse(string(b)), nil
 		}),
-		fantasy.NewAgentTool[Input]("create_linear_ticket", "create a Linear issue for the current chat. Requires platform and chat_id from the message, a Linear team_id, title, optional description, optional project_id, and priority (0 none, 1 urgent, 2 high, 3 normal, 4 low). The title must be only the task name; do not include routing phrases like 'under project ...', 'in project ...', team names, or project names in the title when those are provided separately as team_id/project_id. If not connected, tell the user to run /connect and choose Linear.", func(ctx context.Context, input Input, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+		fantasy.NewAgentTool[ChatInput]("list_linear_users", "list Linear users available to this chat connection with IDs, names, display names, and emails; use this to resolve user-provided assignee names/emails to assignee_id before creating tickets", func(ctx context.Context, input ChatInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+			var out struct {
+				Users struct {
+					Nodes []struct{ ID, Name, DisplayName, Email string } `json:"nodes"`
+				} `json:"users"`
+			}
+			msg, err := t.linearGraphQL(ctx, input.Platform, input.ChatID, "query { users { nodes { id name displayName email } } }", nil, &out)
+			if msg != "" || err != nil {
+				return fantasy.NewTextResponse(msg), err
+			}
+			b, _ := json.Marshal(out.Users.Nodes)
+			return fantasy.NewTextResponse(string(b)), nil
+		}),
+		fantasy.NewAgentTool[Input]("create_linear_ticket", "create a Linear issue for the current chat. Requires platform and chat_id from the message, a Linear team_id, title, optional description, optional project_id, optional assignee_id, and priority (0 none, 1 urgent, 2 high, 3 normal, 4 low). Resolve mentioned assignees with get_linear_context or list_linear_users first and pass assignee_id. The title must be only the task name; do not include routing phrases like 'under project ...', 'in project ...', team names, project names, or assignee names in the title when those are provided separately as team_id/project_id/assignee_id. If not connected, tell the user to run /connect and choose Linear.", func(ctx context.Context, input Input, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			if input.TeamID == "" || input.Title == "" {
 				return fantasy.NewTextResponse("team_id and title are required"), nil
 			}
 			vars := map[string]interface{}{"input": map[string]interface{}{"teamId": input.TeamID, "title": input.Title, "description": input.Description}}
 			if input.ProjectID != "" {
 				vars["input"].(map[string]interface{})["projectId"] = input.ProjectID
+			}
+			if input.AssigneeID != "" {
+				vars["input"].(map[string]interface{})["assigneeId"] = input.AssigneeID
 			}
 			if input.Priority != 0 {
 				vars["input"].(map[string]interface{})["priority"] = input.Priority

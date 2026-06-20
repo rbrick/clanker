@@ -1,19 +1,16 @@
 package tools
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"time"
 
 	"charm.land/fantasy"
 	"github.com/rbrick/clanker/media"
+	"github.com/rbrick/clanker/openai"
 )
 
 type ImageGeneratorInput struct {
@@ -52,79 +49,22 @@ func (t *ImageGeneratorTool) generate(ctx context.Context, input ImageGeneratorI
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		apiKey = os.Getenv("LLM_API_KEY")
-	}
+	apiKey := firstEnv("OPENAI_API_KEY", "LLM_API_KEY")
 	if apiKey == "" {
 		return "", fmt.Errorf("OPENAI_API_KEY or LLM_API_KEY is required for image generation")
 	}
 	if input.Size == "" {
 		input.Size = "1024x1024"
 	}
-
 	model := os.Getenv("IMAGE_MODEL")
 	if model == "" {
 		model = "gpt-image-1"
 	}
 
-	requestBody := map[string]any{
-		"model":  model,
-		"prompt": input.Prompt,
-		"size":   input.Size,
-	}
-	if model == "dall-e-2" || model == "dall-e-3" {
-		// Legacy DALL-E models accept response_format. Newer image models may
-		// reject it and return b64_json/default data without this parameter.
-		requestBody["response_format"] = "b64_json"
-	}
-	body, _ := json.Marshal(requestBody)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/images/generations", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
 	log.Printf("generating image with model=%s size=%s", model, input.Size)
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
+	data, err := openai.NewImageClient(apiKey).Generate(ctx, openai.ImageRequest{Model: model, Prompt: input.Prompt, Size: input.Size})
 	if err != nil {
 		return "", err
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("image generation failed: %s", string(respBody))
-	}
-
-	var parsed struct {
-		Data []struct {
-			B64JSON string `json:"b64_json"`
-			URL     string `json:"url"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", err
-	}
-	if len(parsed.Data) == 0 {
-		return "", fmt.Errorf("image generation returned no image data")
-	}
-
-	var data []byte
-	if parsed.Data[0].B64JSON != "" {
-		data, err = base64.StdEncoding.DecodeString(parsed.Data[0].B64JSON)
-		if err != nil {
-			return "", err
-		}
-	} else if parsed.Data[0].URL != "" {
-		data, err = downloadImage(ctx, client, parsed.Data[0].URL)
-		if err != nil {
-			return "", err
-		}
-	} else {
-		return "", fmt.Errorf("image generation returned no image data")
 	}
 	blob, err := t.store.Save("image/png", data)
 	if err != nil {
@@ -135,18 +75,11 @@ func (t *ImageGeneratorTool) generate(ctx context.Context, input ImageGeneratorI
 	return url, nil
 }
 
-func downloadImage(ctx context.Context, client *http.Client, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("image download failed: %s", resp.Status)
-	}
-	return io.ReadAll(resp.Body)
+	return ""
 }

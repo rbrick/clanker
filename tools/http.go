@@ -3,9 +3,11 @@ package tools
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"charm.land/fantasy"
 )
@@ -21,40 +23,35 @@ func HTTPTool() fantasy.AgentTool {
 		"http_request",
 		"make HTTP requests to interact with web services and APIs",
 		func(ctx context.Context, input HTTPToolInput, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-
-			log.Println("calling http tool", input)
-			req, err := http.NewRequest(input.Method, input.URL, nil)
-			if err != nil {
-				return fantasy.ToolResponse{
-					Type:    "error",
-					Content: err.Error(),
-				}, err
+			method := strings.ToUpper(input.Method)
+			if method == "" {
+				method = http.MethodGet
 			}
+			log.Printf("calling http tool method=%s url=%s", method, input.URL)
 
-			for key, value := range input.Headers {
-				// Add headers to the request
-				req.Header.Add(key, value)
-			}
-
+			var body io.Reader
 			if input.Body != "" {
-				req.Body = io.NopCloser(bytes.NewReader([]byte(input.Body)))
+				body = bytes.NewReader([]byte(input.Body))
 			}
-
-			response, err := http.DefaultClient.Do(req)
-
+			req, err := http.NewRequestWithContext(ctx, method, input.URL, body)
 			if err != nil {
 				return fantasy.NewTextResponse(err.Error()), err
 			}
+			for key, value := range input.Headers {
+				req.Header.Set(key, value)
+			}
 
-			defer response.Body.Close()
-
-			responseBody, err := io.ReadAll(response.Body)
+			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				return fantasy.NewTextResponse(err.Error()), err
 			}
+			defer resp.Body.Close()
 
-			log.Println(string(responseBody))
-			return fantasy.NewTextResponse(string(responseBody)), nil
+			responseBody, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fantasy.NewTextResponse(err.Error()), err
+			}
+			return fantasy.NewTextResponse(fmt.Sprintf("HTTP %s\n%s", resp.Status, responseBody)), nil
 		},
 	)
 }

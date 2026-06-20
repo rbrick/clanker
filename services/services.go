@@ -1,20 +1,19 @@
 package services
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/rbrick/clanker/database"
 	"github.com/rbrick/clanker/database/models"
+	"github.com/rbrick/clanker/linear"
 )
 
 const LinearService = "linear"
@@ -44,24 +43,19 @@ func (m *Manager) BeginOAuth(platform string, chatID int, service string) (strin
 	if err := m.states.Create(&models.ServiceOAuthState{State: state, Platform: platform, ChatID: chatID, Service: service}); err != nil {
 		return "", err
 	}
-	callback := stringsTrimRight(m.publicURL, "/") + "/oauth/linear/callback"
-	u, _ := url.Parse("https://linear.app/oauth/authorize")
-	q := u.Query()
-	q.Set("client_id", clientID)
-	q.Set("redirect_uri", callback)
-	q.Set("response_type", "code")
-	q.Set("scope", "read,write")
-	q.Set("state", state)
-	q.Set("prompt", "consent")
-	u.RawQuery = q.Encode()
-	return u.String(), nil
+	return linear.OAuthConfig{ClientID: clientID, RedirectURL: m.linearRedirectURL()}.AuthCodeURL(state), nil
 }
 
-func stringsTrimRight(s, cutset string) string {
-	for len(s) > 0 && cutset == "/" && s[len(s)-1] == '/' {
-		s = s[:len(s)-1]
+func (m *Manager) linearOAuthConfig() (linear.OAuthConfig, error) {
+	clientID, secret := os.Getenv("LINEAR_CLIENT_ID"), os.Getenv("LINEAR_CLIENT_SECRET")
+	if clientID == "" || secret == "" {
+		return linear.OAuthConfig{}, errors.New("LINEAR_CLIENT_ID/LINEAR_CLIENT_SECRET are not configured")
 	}
-	return s
+	return linear.OAuthConfig{ClientID: clientID, ClientSecret: secret, RedirectURL: m.linearRedirectURL(), HTTPClient: m.httpClient}, nil
+}
+
+func (m *Manager) linearRedirectURL() string {
+	return strings.TrimRight(m.publicURL, "/") + "/oauth/linear/callback"
 }
 
 func (m *Manager) CompleteLinearOAuth(ctx context.Context, state, code string) (*models.ServiceConnection, error) {
@@ -73,34 +67,15 @@ func (m *Manager) CompleteLinearOAuth(ctx context.Context, state, code string) (
 		return nil, errors.New("invalid or expired oauth state")
 	}
 	st := states[0]
-	clientID, secret := os.Getenv("LINEAR_CLIENT_ID"), os.Getenv("LINEAR_CLIENT_SECRET")
-	if clientID == "" || secret == "" {
-		return nil, errors.New("LINEAR_CLIENT_ID/LINEAR_CLIENT_SECRET are not configured")
-	}
-	form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {stringsTrimRight(m.publicURL, "/") + "/oauth/linear/callback"}, "client_id": {clientID}, "client_secret": {secret}}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.linear.app/oauth/token", bytes.NewBufferString(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := m.httpClient.Do(req)
+	oauthConfig, err := m.linearOAuthConfig()
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	var tok struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+	tok, err := oauthConfig.Exchange(ctx, code)
+	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode >= 300 || tok.AccessToken == "" {
-		return nil, fmt.Errorf("linear token exchange failed: %s", resp.Status)
-	}
-	expiresAt := time.Time{}
-	if tok.ExpiresIn > 0 {
-		expiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
-	}
-	conn := &models.ServiceConnection{Platform: st.Platform, ChatID: st.ChatID, Service: LinearService, AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, ExpiresAt: expiresAt}
+	conn := &models.ServiceConnection{Platform: st.Platform, ChatID: st.ChatID, Service: LinearService, AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, ExpiresAt: tok.ExpiresAt}
 	existing, _ := m.connections.Where("platform = ? AND chat_id = ? AND service = ?", conn.Platform, conn.ChatID, conn.Service)
 	if len(existing) > 0 {
 		conn.ID = existing[0].ID
@@ -140,37 +115,19 @@ func (m *Manager) RefreshLinearConnection(ctx context.Context, conn *models.Serv
 		conn.ExpiresAt = time.Time{}
 		return m.connections.Update(conn)
 	}
-	clientID, secret := os.Getenv("LINEAR_CLIENT_ID"), os.Getenv("LINEAR_CLIENT_SECRET")
-	if clientID == "" || secret == "" {
-		return errors.New("LINEAR_CLIENT_ID/LINEAR_CLIENT_SECRET are not configured")
-	}
-	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {conn.RefreshToken}, "client_id": {clientID}, "client_secret": {secret}}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.linear.app/oauth/token", bytes.NewBufferString(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := m.httpClient.Do(req)
+	oauthConfig, err := m.linearOAuthConfig()
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	var tok struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+	tok, err := oauthConfig.Refresh(ctx, conn.RefreshToken)
+	if err != nil {
 		return err
-	}
-	if resp.StatusCode >= 300 || tok.AccessToken == "" {
-		return fmt.Errorf("linear token refresh failed: %s", resp.Status)
 	}
 	conn.AccessToken = tok.AccessToken
 	if tok.RefreshToken != "" {
 		conn.RefreshToken = tok.RefreshToken
 	}
-	conn.ExpiresAt = time.Time{}
-	if tok.ExpiresIn > 0 {
-		conn.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
-	}
+	conn.ExpiresAt = tok.ExpiresAt
 	return m.connections.Update(conn)
 }
 

@@ -96,7 +96,11 @@ func (m *Manager) CompleteLinearOAuth(ctx context.Context, state, code string) (
 	if resp.StatusCode >= 300 || tok.AccessToken == "" {
 		return nil, fmt.Errorf("linear token exchange failed: %s", resp.Status)
 	}
-	conn := &models.ServiceConnection{Platform: st.Platform, ChatID: st.ChatID, Service: LinearService, AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, ExpiresAt: time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)}
+	expiresAt := time.Time{}
+	if tok.ExpiresIn > 0 {
+		expiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
+	}
+	conn := &models.ServiceConnection{Platform: st.Platform, ChatID: st.ChatID, Service: LinearService, AccessToken: tok.AccessToken, RefreshToken: tok.RefreshToken, ExpiresAt: expiresAt}
 	existing, _ := m.connections.Where("platform = ? AND chat_id = ? AND service = ?", conn.Platform, conn.ChatID, conn.Service)
 	if len(existing) > 0 {
 		conn.ID = existing[0].ID
@@ -113,11 +117,61 @@ func (m *Manager) CompleteLinearOAuth(ctx context.Context, state, code string) (
 }
 
 func (m *Manager) GetConnection(platform string, chatID int, service string) (*models.ServiceConnection, error) {
+	return m.GetConnectionContext(context.Background(), platform, chatID, service)
+}
+
+func (m *Manager) GetConnectionContext(ctx context.Context, platform string, chatID int, service string) (*models.ServiceConnection, error) {
 	rows, err := m.connections.Where("platform = ? AND chat_id = ? AND service = ?", platform, chatID, service)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	return &rows[0], nil
+	conn := &rows[0]
+	if service == LinearService && !conn.ExpiresAt.IsZero() && time.Until(conn.ExpiresAt) < time.Minute {
+		if err := m.RefreshLinearConnection(ctx, conn); err != nil {
+			return nil, err
+		}
+	}
+	return conn, nil
+}
+
+func (m *Manager) RefreshLinearConnection(ctx context.Context, conn *models.ServiceConnection) error {
+	if conn.RefreshToken == "" {
+		// Some Linear apps issue long-lived tokens without refresh tokens.
+		conn.ExpiresAt = time.Time{}
+		return m.connections.Update(conn)
+	}
+	clientID, secret := os.Getenv("LINEAR_CLIENT_ID"), os.Getenv("LINEAR_CLIENT_SECRET")
+	if clientID == "" || secret == "" {
+		return errors.New("LINEAR_CLIENT_ID/LINEAR_CLIENT_SECRET are not configured")
+	}
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {conn.RefreshToken}, "client_id": {clientID}, "client_secret": {secret}}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.linear.app/oauth/token", bytes.NewBufferString(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var tok struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+		return err
+	}
+	if resp.StatusCode >= 300 || tok.AccessToken == "" {
+		return fmt.Errorf("linear token refresh failed: %s", resp.Status)
+	}
+	conn.AccessToken = tok.AccessToken
+	if tok.RefreshToken != "" {
+		conn.RefreshToken = tok.RefreshToken
+	}
+	conn.ExpiresAt = time.Time{}
+	if tok.ExpiresIn > 0 {
+		conn.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
+	}
+	return m.connections.Update(conn)
 }
 
 func ChatID(s string) int { i, _ := strconv.Atoi(s); return i }

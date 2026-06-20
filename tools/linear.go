@@ -23,17 +23,30 @@ type linearGraphQLResponse struct {
 }
 
 func (t *LinearTool) linearGraphQL(ctx context.Context, platform string, chatID int, query string, vars map[string]interface{}, out interface{}) (string, error) {
-	conn, err := t.services.GetConnection(platform, chatID, services.LinearService)
+	conn, err := t.services.GetConnectionContext(ctx, platform, chatID, services.LinearService)
 	if err != nil {
 		return "Linear is not connected for this chat. Ask an admin/user to run /connect and choose Linear.", nil
 	}
 	body, _ := json.Marshal(map[string]interface{}{"query": query, "variables": vars})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.linear.app/graphql", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+conn.AccessToken)
-	resp, err := http.DefaultClient.Do(req)
+	doRequest := func() (*http.Response, error) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.linear.app/graphql", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+conn.AccessToken)
+		return http.DefaultClient.Do(req)
+	}
+	resp, err := doRequest()
 	if err != nil {
 		return err.Error(), err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		if err := t.services.RefreshLinearConnection(ctx, conn); err != nil {
+			return "Linear authorization expired and refresh failed; please run /connect and choose Linear again.", nil
+		}
+		resp, err = doRequest()
+		if err != nil {
+			return err.Error(), err
+		}
 	}
 	defer resp.Body.Close()
 	var gql linearGraphQLResponse

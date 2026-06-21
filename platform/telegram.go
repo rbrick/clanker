@@ -128,23 +128,8 @@ func (t *TelegramPlatform) mentions(ctx context.Context, msg *text.Message) bool
 		}
 
 		text := strings.ToLower(msg.Content.Text)
-		if strings.Contains(text, "clanker") || strings.Contains(text, strings.ToLower(botUsername)) {
-			return true
-		}
-
-		// Be a little more forgiving for follow-up complaints/requests that are
-		// clearly addressed to the bot but omit its name, e.g. "I asked you to
-		// write a simple Bukkit plugin, but you didn't respond."
-		directAddressPhrases := []string{
-			"asked you", "told you", "can you", "could you", "would you",
-			"are you", "why didn't you", "you didn't", "you did not",
-			"unable to code", "write code", "write a plugin", "bukkit plugin",
-		}
-		for _, phrase := range directAddressPhrases {
-			if strings.Contains(text, phrase) {
-				return true
-			}
-		}
+		hasBotName := strings.Contains(text, "clanker") || strings.Contains(text, strings.ToLower(botUsername))
+		return hasBotName
 
 	}
 
